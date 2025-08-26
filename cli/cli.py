@@ -90,7 +90,7 @@ def cli():
 @cli.command()
 @click.argument("service")
 def promoting_qa(service):
-    """Update QA JSON with version from LAB JSON for a given service and optionally commit/push."""
+    """Update QA JSON with version from LAB JSON for a given service (case-insensitive) and optionally commit/push."""
 
     # 🔒 Validate repo first
     if not validate_git_repo(BASE_PATH):
@@ -111,27 +111,35 @@ def promoting_qa(service):
     with TARGET_FILE.open() as f:
         qa_data = json.load(f)
 
-    # Get version from LAB
-    lab_version = lab_data.get("services", {}).get(service)
-    if not lab_version:
+    lab_services = lab_data.get("services", {})
+    qa_services = qa_data.setdefault("services", {})
+
+    # Normalize service names (case-insensitive)
+    lab_lookup = {k.lower(): (k, v) for k, v in lab_services.items()}
+    qa_lookup = {k.lower(): (k, v) for k, v in qa_services.items()}
+
+    # Match service ignoring case
+    service_lower = service.lower()
+    if service_lower not in lab_lookup:
         click.echo(f"❌ Service '{service}' not found in LAB file.")
         return
 
-    # Update QA JSON immediately
-    qa_services = qa_data.setdefault("services", {})
-    old_version = qa_services.get(service)
-    qa_services[service] = lab_version
+    lab_key, lab_version = lab_lookup[service_lower]
+    old_version = qa_lookup.get(service_lower, (service, None))[1]
+
+    # Update QA JSON
+    qa_services[lab_key] = lab_version
 
     # Save QA JSON
     with TARGET_FILE.open("w") as f:
         json.dump(qa_data, f, indent=2)
 
     click.echo(f"💾 QA file updated: {TARGET_FILE}")
-    click.echo(f"⚡ {service}: {old_version or 'not present'} → {lab_version}")
+    click.echo(f"⚡ {lab_key}: {old_version or 'not present'} → {lab_version}")
     click.echo("ℹ️  You can now run `git status` outside the CLI to review changes.")
 
     # Ask user confirmation to commit & push or revert
-    commit_message = f"Promote {service} to QA: {lab_version}"
+    commit_message = f"Promote {lab_key} to QA: {lab_version}"
     git_commit_push_or_revert(BASE_PATH, TARGET_FILE, commit_message)
 
 # -----------------------------
