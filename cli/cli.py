@@ -16,33 +16,44 @@ TARGET_FILE = BASE_PATH / "qa-qa01.json"
 # -----------------------------
 def validate_git_repo(repo_path: Path) -> bool:
     """Check if Git repo is clean and up to date with remote."""
+    click.echo("🔍 Validating Git repository status...")
+
     try:
         # Fetch remote updates
         subprocess.run(["git", "-C", str(repo_path), "fetch"], check=True, capture_output=True)
 
-        # Check local status
-        status_result = subprocess.run(
-            ["git", "-C", str(repo_path), "status", "-uno"],
+        # 1. Check for uncommitted changes
+        diff_result = subprocess.run(
+            ["git", "-C", str(repo_path), "status", "--porcelain=v1"],
             check=True, capture_output=True, text=True
         )
-
-        status_output = status_result.stdout
-        if "nothing to commit, working tree clean" not in status_output:
+        if diff_result.stdout.strip():
             click.echo("❌ Repository has uncommitted changes. Please commit or stash before proceeding.")
             return False
 
-        if "Your branch is behind" in status_output:
+        # 2. Check for ahead/behind status
+        local_rev = subprocess.check_output(["git", "-C", str(repo_path), "rev-parse", "@"]).strip()
+        remote_rev = subprocess.check_output(["git", "-C", str(repo_path), "rev-parse", "@{u}"]).strip()
+        base_rev = subprocess.check_output(["git", "-C", str(repo_path), "merge-base", "@", "@{u}"]).strip()
+
+        if local_rev == remote_rev:
+            click.echo("✅ Repository is clean and up to date.")
+            return True
+        elif local_rev == base_rev:
             click.echo("❌ Repository is behind remote. Please pull latest changes before proceeding.")
             return False
-
-        if "Your branch is ahead" in status_output:
+        elif remote_rev == base_rev:
             click.echo("❌ Repository has local commits not pushed. Please push before proceeding.")
             return False
-
-        return True
+        else:
+            click.echo("❌ Repository has diverged from remote. Please resolve before proceeding.")
+            return False
 
     except subprocess.CalledProcessError as e:
         click.echo(f"❌ Failed to validate repository: {e}")
+        return False
+    except subprocess.SubprocessError as e:
+        click.echo(f"❌ Git check failed: {e}")
         return False
 
 
@@ -117,7 +128,7 @@ def promoting_qa(service):
 
     click.echo(f"💾 QA file updated: {TARGET_FILE}")
     click.echo(f"⚡ {service}: {old_version or 'not present'} → {lab_version}")
-    click.echo("You can now run `git status` outside the CLI to review changes.")
+    click.echo("ℹ️  You can now run `git status` outside the CLI to review changes.")
 
     # Ask user confirmation to commit & push or revert
     commit_message = f"Promote {service} to QA: {lab_version}"
