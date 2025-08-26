@@ -110,15 +110,17 @@ def promoting_qa(service):
     commit_message = f"Promote {key} to QA: {lab_version}"
     git_commit_push(BASE_PATH, TARGET_FILE, commit_message)
 
-# -----------------------------
-# Terminate EC2 instances in ASG
-# -----------------------------
 @cli.command()
 @click.option("--prefix", default="onviobr-lab-lab01", help="Prefix for ASG names to search")
-def terminate_asg_instances(prefix):
+@click.option("--profile", default="default", help="AWS profile from ~/.aws/credentials")
+def terminate_asg_instances(prefix, profile):
     """Terminate all EC2 instances in a selected Auto Scaling Group."""
-    client = boto3.client("autoscaling")
-    ec2 = boto3.client("ec2")
+    import boto3
+
+    # Load session from ~/.aws/credentials
+    session = boto3.Session(profile_name=profile)
+    client = session.client("autoscaling")
+    ec2 = session.client("ec2")
 
     # List ASGs
     response = client.describe_auto_scaling_groups()
