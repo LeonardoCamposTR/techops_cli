@@ -14,6 +14,38 @@ TARGET_FILE = BASE_PATH / "qa-qa01.json"
 # -----------------------------
 # Helper Functions
 # -----------------------------
+def validate_git_repo(repo_path: Path) -> bool:
+    """Check if Git repo is clean and up to date with remote."""
+    try:
+        # Fetch remote updates
+        subprocess.run(["git", "-C", str(repo_path), "fetch"], check=True, capture_output=True)
+
+        # Check local status
+        status_result = subprocess.run(
+            ["git", "-C", str(repo_path), "status", "-uno"],
+            check=True, capture_output=True, text=True
+        )
+
+        status_output = status_result.stdout
+        if "nothing to commit, working tree clean" not in status_output:
+            click.echo("❌ Repository has uncommitted changes. Please commit or stash before proceeding.")
+            return False
+
+        if "Your branch is behind" in status_output:
+            click.echo("❌ Repository is behind remote. Please pull latest changes before proceeding.")
+            return False
+
+        if "Your branch is ahead" in status_output:
+            click.echo("❌ Repository has local commits not pushed. Please push before proceeding.")
+            return False
+
+        return True
+
+    except subprocess.CalledProcessError as e:
+        click.echo(f"❌ Failed to validate repository: {e}")
+        return False
+
+
 def git_commit_push_or_revert(repo_path: Path, file_path: Path, commit_message: str):
     """Commit and push a file to Git or revert if user declines."""
     click.echo(f"⚡ About to commit and push {file_path} with message:\n  '{commit_message}'")
@@ -48,6 +80,11 @@ def cli():
 @click.argument("service")
 def promoting_qa(service):
     """Update QA JSON with version from LAB JSON for a given service and optionally commit/push."""
+
+    # 🔒 Validate repo first
+    if not validate_git_repo(BASE_PATH):
+        return
+
     if not SOURCE_FILE.exists():
         click.echo(f"❌ LAB file not found: {SOURCE_FILE}")
         return
