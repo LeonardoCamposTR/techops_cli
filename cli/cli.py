@@ -5,7 +5,6 @@ import subprocess
 import os
 from InquirerPy import inquirer
 
-
 # -----------------------------
 # Paths
 # -----------------------------
@@ -111,7 +110,6 @@ def promoting_qa(service):
     commit_message = f"Promote {key} to QA: {lab_version}"
     git_commit_push(BASE_PATH, TARGET_FILE, commit_message)
 
-
 # -----------------------------
 # ASG Terminate Functions
 # -----------------------------
@@ -135,8 +133,8 @@ def run_aws_cli(command: list) -> dict:
 @click.option("--region", default=None, help="AWS region (overrides ~/.aws/config)")
 def terminate_asg_instances(env, profile, region):
     """
-    Terminate EC2 instances in one or more Auto Scaling Groups
-    filtered by tags: platform=onviobr + Name=<env>.
+    Terminate all EC2 instances in selected Auto Scaling Groups
+    filtered by tags: platform=onviobr + Env=<env>.
     """
 
     # Build base AWS CLI args
@@ -147,36 +145,37 @@ def terminate_asg_instances(env, profile, region):
         base_args += ["--region", region]
 
     # Get all ASGs
-    asg_data = run_aws_cli(["autoscaling", "describe-auto-scaling-groups"] + base_args)
+    asg_data = run_aws_cli(
+        ["autoscaling", "describe-auto-scaling-groups"] + base_args
+    )
+
     asgs = asg_data.get("AutoScalingGroups", [])
     if not asgs:
         click.echo("❌ No Auto Scaling Groups found.")
         return
 
-    # Filter ASGs by platform=onviobr + Name=<env>
-    matching_asgs = [
-        asg for asg in asgs
-        if {t["Key"]: t["Value"] for t in asg.get("Tags", [])}.get("platform") == "onviobr"
-        and {t["Key"]: t["Value"] for t in asg.get("Tags", [])}.get("Name", "").lower() == env.lower()
-    ]
+    # Filter ASGs by platform=onviobr + Env=<env>
+    matching_asgs = []
+    for asg in asgs:
+        tags = {t["Key"].lower(): t["Value"] for t in asg.get("Tags", [])}
+        if tags.get("platform") == "onviobr" and tags.get("env", "").lower() == env.lower():
+            matching_asgs.append(asg)
 
     if not matching_asgs:
-        click.echo(f"❌ No ASGs found with platform=onviobr and Name={env}")
+        click.echo(f"❌ No ASGs found with platform=onviobr and Env={env}")
         return
 
-    # Use checkboxes to select one or more ASGs
-    choices = [
-        {"name": asg["AutoScalingGroupName"], "value": asg}
-        for asg in matching_asgs
-    ]
-    selected_asgs = inquirer.checkbox(
-        message="Select ASGs to terminate:",
-        choices=choices,
-        instruction="(Use space to select, enter to confirm)"
+    # Fuzzy multi-select with search/filter
+    selected_asgs = inquirer.fuzzy(
+        message="Select ASGs to terminate (type to filter, space to select):",
+        choices=[{"name": asg["AutoScalingGroupName"], "value": asg} for asg in matching_asgs],
+        max_height="70%",
+        multiselect=True,
+        instruction="Type to filter, use space to select, enter to confirm"
     ).execute()
 
     if not selected_asgs:
-        click.echo("❌ No ASGs selected")
+        click.echo("❌ No ASGs selected.")
         return
 
     # Terminate instances in selected ASGs
@@ -193,10 +192,9 @@ def terminate_asg_instances(env, profile, region):
                 ["aws", "ec2", "terminate-instances", "--instance-ids"] + instance_ids + base_args,
                 check=True,
             )
-            click.echo("🚀 Termination initiated.")
+            click.echo(f"🚀 Termination initiated for ASG {asg_name}.")
         else:
             click.echo(f"❌ Termination cancelled for ASG {asg_name}.")
-
 
 def main():
     cli()
