@@ -14,8 +14,8 @@ TARGET_FILE = BASE_PATH / "qa-qa01.json"
 # -----------------------------
 # Helper Functions
 # -----------------------------
-def git_commit_push(repo_path: Path, file_path: Path, commit_message: str):
-    """Commit and push a file to Git in the given repository."""
+def git_commit_push_or_revert(repo_path: Path, file_path: Path, commit_message: str):
+    """Commit and push a file to Git or revert if user declines."""
     click.echo(f"⚡ About to commit and push {file_path} with message:\n  '{commit_message}'")
     if click.confirm("Do you want to proceed?", default=True):
         try:
@@ -26,8 +26,12 @@ def git_commit_push(repo_path: Path, file_path: Path, commit_message: str):
         except subprocess.CalledProcessError as e:
             click.echo(f"❌ Git command failed: {e}")
     else:
-        click.echo("❌ Commit and push cancelled. File remains updated.")
-
+        click.echo("❌ Commit cancelled. Reverting changes...")
+        try:
+            subprocess.run(["git", "-C", str(repo_path), "restore", str(file_path)], check=True)
+            click.echo(f"♻️  Changes reverted: {file_path}")
+        except subprocess.CalledProcessError as e:
+            click.echo(f"❌ Failed to revert changes: {e}")
 
 # -----------------------------
 # CLI Definition
@@ -36,7 +40,6 @@ def git_commit_push(repo_path: Path, file_path: Path, commit_message: str):
 def cli():
     """🚀 DevOps CLI - Utilities for environment setup & troubleshooting."""
     pass
-
 
 # -----------------------------
 # Promoting to QA
@@ -79,14 +82,15 @@ def promoting_qa(service):
     click.echo(f"⚡ {service}: {old_version or 'not present'} → {lab_version}")
     click.echo("You can now run `git status` outside the CLI to review changes.")
 
-    # Ask user confirmation to commit & push
+    # Ask user confirmation to commit & push or revert
     commit_message = f"Promote {service} to QA: {lab_version}"
-    git_commit_push(BASE_PATH, TARGET_FILE, commit_message)
+    git_commit_push_or_revert(BASE_PATH, TARGET_FILE, commit_message)
 
-
+# -----------------------------
+# Main Entry
+# -----------------------------
 def main():
     cli()
-
 
 if __name__ == "__main__":
     main()
