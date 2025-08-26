@@ -7,8 +7,7 @@ import os
 # -----------------------------
 # Paths
 # -----------------------------
-DEFAULT_BASE_PATH = "/home/leonardoscampos/gits/a202606_mastersafdevops-apidata/onviobr/deployer"
-BASE_PATH = Path(os.getenv("DEPLOYER_BASE_PATH", DEFAULT_BASE_PATH))
+BASE_PATH = Path(os.getenv("REPO_BASE_PATH"))
 SOURCE_FILE = BASE_PATH / "lab-lab01.json"
 TARGET_FILE = BASE_PATH / "qa-qa01.json"
 
