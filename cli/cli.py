@@ -133,7 +133,7 @@ def run_aws_cli(command: list) -> dict:
 @click.option("--region", default=None, help="AWS region (overrides ~/.aws/config)")
 def terminate_asg_instances(env, profile, region):
     """
-    Terminate all EC2 instances in selected Auto Scaling Groups
+    Terminate all EC2 instances in one or more Auto Scaling Groups
     filtered by tags: platform=onviobr + Env=<env>.
     """
 
@@ -157,28 +157,27 @@ def terminate_asg_instances(env, profile, region):
     # Filter ASGs by platform=onviobr + Env=<env>
     matching_asgs = []
     for asg in asgs:
-        tags = {t["Key"].lower(): t["Value"] for t in asg.get("Tags", [])}
-        if tags.get("platform") == "onviobr" and tags.get("env", "").lower() == env.lower():
+        tags = {t["Key"]: t["Value"] for t in asg.get("Tags", [])}
+        if tags.get("platform") == "onviobr" and tags.get("Env", "").lower() == env.lower():
             matching_asgs.append(asg)
 
     if not matching_asgs:
         click.echo(f"❌ No ASGs found with platform=onviobr and Env={env}")
         return
 
-    # Fuzzy multi-select with search/filter
+    # Multi-select with search/filter
     selected_asgs = inquirer.fuzzy(
-        message="Select ASGs to terminate (type to filter, space to select):",
+        message="Select ASGs to terminate (type to filter):",
         choices=[{"name": asg["AutoScalingGroupName"], "value": asg} for asg in matching_asgs],
-        max_height="70%",
         multiselect=True,
-        instruction="Type to filter, use space to select, enter to confirm"
+        max_height="70%",
+        long_instruction="Type to filter, space to select/deselect, enter to confirm"
     ).execute()
 
     if not selected_asgs:
-        click.echo("❌ No ASGs selected.")
+        click.echo("❌ No ASGs selected, aborting.")
         return
 
-    # Terminate instances in selected ASGs
     for asg in selected_asgs:
         asg_name = asg["AutoScalingGroupName"]
         instance_ids = [inst["InstanceId"] for inst in asg.get("Instances", [])]
@@ -187,7 +186,7 @@ def terminate_asg_instances(env, profile, region):
             continue
 
         click.echo(f"⚡ Terminating instances in ASG {asg_name}: {', '.join(instance_ids)}")
-        if click.confirm(f"Do you want to proceed with ASG {asg_name}?", default=False):
+        if click.confirm("Do you want to proceed?", default=False):
             subprocess.run(
                 ["aws", "ec2", "terminate-instances", "--instance-ids"] + instance_ids + base_args,
                 check=True,
