@@ -134,7 +134,7 @@ def run_aws_cli(command: list) -> dict:
 def terminate_asg_instances(env, profile, region):
     """
     Terminate all EC2 instances in one or more Auto Scaling Groups
-    filtered by tags: platform=onviobr + Env=<env>.
+    filtered by tags: platform=onviobr + Name=<env>.
     """
 
     # Build base AWS CLI args
@@ -154,33 +154,41 @@ def terminate_asg_instances(env, profile, region):
         click.echo("❌ No Auto Scaling Groups found.")
         return
 
-    # Filter ASGs by platform=onviobr + Env=<env>
-    matching_asgs = []
-    for asg in asgs:
-        tags = {t["Key"]: t["Value"] for t in asg.get("Tags", [])}
-        if tags.get("platform") == "onviobr" and tags.get("Env", "").lower() == env.lower():
-            matching_asgs.append(asg)
+    # Filter ASGs by platform=onviobr + Name=<env>
+    matching_asgs = [
+        asg for asg in asgs
+        if any(t["Key"] == "platform" and t["Value"] == "onviobr" for t in asg.get("Tags", []))
+        and any(t["Key"] == "Name" and t["Value"].lower() == env.lower() for t in asg.get("Tags", []))
+    ]
 
     if not matching_asgs:
-        click.echo(f"❌ No ASGs found with platform=onviobr and Env={env}")
+        click.echo(f"❌ No ASGs found with platform=onviobr and Name={env}")
         return
 
-    # Multi-select with search/filter
-    selected_asgs = inquirer.fuzzy(
-        message="Select ASGs to terminate (type to filter):",
-        choices=[{"name": asg["AutoScalingGroupName"], "value": asg} for asg in matching_asgs],
-        multiselect=True,
-        max_height="70%",
-        long_instruction="Type to filter, space to select/deselect, enter to confirm"
+    # Multi-select ASG using checkbox
+    choices = [asg["AutoScalingGroupName"] for asg in matching_asgs]
+    selected_asgs = inquirer.checkbox(
+        message="Select ASG(s) to terminate (press SPACE to select, ENTER to confirm, q to exit):",
+        choices=choices,
+        instruction="Use SPACE to select, ENTER to confirm, q to quit"
     ).execute()
 
     if not selected_asgs:
-        click.echo("❌ No ASGs selected, aborting.")
+        click.echo("❌ No ASGs selected. Exiting.")
         return
 
-    for asg in selected_asgs:
-        asg_name = asg["AutoScalingGroupName"]
-        instance_ids = [inst["InstanceId"] for inst in asg.get("Instances", [])]
+    click.echo(f"⚡ Selected ASGs: {', '.join(selected_asgs)}")
+
+    for asg_name in selected_asgs:
+        # Get instances from ASG
+        instances_data = run_aws_cli(
+            ["autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", asg_name] + base_args
+        )
+        instance_ids = [
+            inst["InstanceId"]
+            for asg in instances_data.get("AutoScalingGroups", [])
+            for inst in asg.get("Instances", [])
+        ]
         if not instance_ids:
             click.echo(f"ℹ️ No instances found in ASG {asg_name}")
             continue
@@ -191,7 +199,7 @@ def terminate_asg_instances(env, profile, region):
                 ["aws", "ec2", "terminate-instances", "--instance-ids"] + instance_ids + base_args,
                 check=True,
             )
-            click.echo(f"🚀 Termination initiated for ASG {asg_name}.")
+            click.echo("🚀 Termination initiated.")
         else:
             click.echo(f"❌ Termination cancelled for ASG {asg_name}.")
 
