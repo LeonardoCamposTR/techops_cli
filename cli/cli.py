@@ -3,7 +3,8 @@ import json
 from pathlib import Path
 import subprocess
 import os
-import boto3
+from InquirerPy import inquirer
+
 
 # -----------------------------
 # Paths
@@ -134,8 +135,8 @@ def run_aws_cli(command: list) -> dict:
 @click.option("--region", default=None, help="AWS region (overrides ~/.aws/config)")
 def terminate_asg_instances(env, profile, region):
     """
-    Terminate all EC2 instances in an Auto Scaling Group
-    filtered by tags: platform=onviobr + Env=<env>.
+    Terminate EC2 instances in one or more Auto Scaling Groups
+    filtered by tags: platform=onviobr + Name=<env>.
     """
 
     # Build base AWS CLI args
@@ -146,55 +147,55 @@ def terminate_asg_instances(env, profile, region):
         base_args += ["--region", region]
 
     # Get all ASGs
-    asg_data = run_aws_cli(
-        ["autoscaling", "describe-auto-scaling-groups"] + base_args
-    )
-
+    asg_data = run_aws_cli(["autoscaling", "describe-auto-scaling-groups"] + base_args)
     asgs = asg_data.get("AutoScalingGroups", [])
     if not asgs:
         click.echo("❌ No Auto Scaling Groups found.")
         return
 
-    # Filter ASGs by platfform=onviobr + Env=<env>
-    matching_asgs = []
-    for asg in asgs:
-        tags = {t["Key"]: t["Value"] for t in asg.get("Tags", [])}
-        if tags.get("platform") == "onviobr" and tags.get("name", "").lower() == env.lower():
-            matching_asgs.append(asg)
+    # Filter ASGs by platform=onviobr + Name=<env>
+    matching_asgs = [
+        asg for asg in asgs
+        if {t["Key"]: t["Value"] for t in asg.get("Tags", [])}.get("platform") == "onviobr"
+        and {t["Key"]: t["Value"] for t in asg.get("Tags", [])}.get("Name", "").lower() == env.lower()
+    ]
 
     if not matching_asgs:
-        click.echo(f"❌ No ASGs found with platfform=onviobr and Env={env}")
+        click.echo(f"❌ No ASGs found with platform=onviobr and Name={env}")
         return
 
-    # Show ASGs and let user select
-    click.echo(f"🔍 Matching ASGs with platfform=onviobr and Env={env}:")
-    for i, asg in enumerate(matching_asgs, 1):
-        click.echo(f"{i}. {asg['AutoScalingGroupName']}")
+    # Use checkboxes to select one or more ASGs
+    choices = [
+        {"name": asg["AutoScalingGroupName"], "value": asg}
+        for asg in matching_asgs
+    ]
+    selected_asgs = inquirer.checkbox(
+        message="Select ASGs to terminate:",
+        choices=choices,
+        instruction="(Use space to select, enter to confirm)"
+    ).execute()
 
-    asg_choice = click.prompt("Select an ASG", type=int)
-    if asg_choice < 1 or asg_choice > len(matching_asgs):
-        click.echo("❌ Invalid ASG choice")
+    if not selected_asgs:
+        click.echo("❌ No ASGs selected")
         return
 
-    selected_asg = matching_asgs[asg_choice - 1]
-    asg_name = selected_asg["AutoScalingGroupName"]
+    # Terminate instances in selected ASGs
+    for asg in selected_asgs:
+        asg_name = asg["AutoScalingGroupName"]
+        instance_ids = [inst["InstanceId"] for inst in asg.get("Instances", [])]
+        if not instance_ids:
+            click.echo(f"ℹ️ No instances found in ASG {asg_name}")
+            continue
 
-    # Get instances from ASG
-    instance_ids = [inst["InstanceId"] for inst in selected_asg.get("Instances", [])]
-    if not instance_ids:
-        click.echo(f"ℹ️ No instances found in ASG {asg_name}")
-        return
-
-    click.echo(f"⚡ Terminating instances in ASG {asg_name}: {', '.join(instance_ids)}")
-
-    if click.confirm("Do you want to proceed?", default=False):
-        subprocess.run(
-            ["aws", "ec2", "terminate-instances", "--instance-ids"] + instance_ids + base_args,
-            check=True,
-        )
-        click.echo("🚀 Termination initiated.")
-    else:
-        click.echo("❌ Termination cancelled.")
+        click.echo(f"⚡ Terminating instances in ASG {asg_name}: {', '.join(instance_ids)}")
+        if click.confirm(f"Do you want to proceed with ASG {asg_name}?", default=False):
+            subprocess.run(
+                ["aws", "ec2", "terminate-instances", "--instance-ids"] + instance_ids + base_args,
+                check=True,
+            )
+            click.echo("🚀 Termination initiated.")
+        else:
+            click.echo(f"❌ Termination cancelled for ASG {asg_name}.")
 
 
 def main():
