@@ -115,12 +115,10 @@ def promoting_qa(service):
 # ASG Terminate Functions
 # -----------------------------
 @cli.command()
-@click.option("--name", required=True, help="Tag 'Name' value to search ASG")
-@click.option("--env", required=True, help="Tag 'Env' value to search ASG")
 @click.option("--profile", default="default", help="AWS profile from ~/.aws/credentials")
 @click.option("--region", default=None, help="AWS region (overrides ~/.aws/config)")
-def terminate_asg_instances(name, env, profile, region):
-    """Terminate all EC2 instances in an Auto Scaling Group filtered by tags Name and Env."""
+def terminate_asg_instances(profile, region):
+    """Terminate all EC2 instances in an Auto Scaling Group filtered by tags (platfform=onviobr + Env)."""
     import boto3
 
     # Session with credentials from ~/.aws/credentials
@@ -134,28 +132,52 @@ def terminate_asg_instances(name, env, profile, region):
     for page in paginator.paginate():
         all_asgs.extend(page["AutoScalingGroups"])
 
-    # Filter ASGs by tags
-    def match_tags(asg):
-        tags = {t["Key"]: t["Value"] for t in asg.get("Tags", [])}
-        return tags.get("Name") == name and tags.get("Env") == env
+    # Filter ASGs by platfform=onviobr
+    def get_tags(asg):
+        return {t["Key"]: t["Value"] for t in asg.get("Tags", [])}
 
-    filtered_asgs = [asg for asg in all_asgs if match_tags(asg)]
+    asgs_onviobr = [asg for asg in all_asgs if get_tags(asg).get("platfform") == "onviobr"]
 
-    if not filtered_asgs:
-        click.echo(f"❌ No ASGs found with tags Name={name}, Env={env}")
+    if not asgs_onviobr:
+        click.echo("❌ No ASGs found with tag platfform=onviobr")
+        return
+
+    # Collect available envs from these ASGs
+    envs = sorted({get_tags(asg).get("Env") for asg in asgs_onviobr if "Env" in get_tags(asg)})
+    if not envs:
+        click.echo("❌ No Env tags found in ASGs with platfform=onviobr")
+        return
+
+    # Ask user to choose Env
+    click.echo("🔍 Available Envs:")
+    for i, env in enumerate(envs, 1):
+        click.echo(f"{i}. {env}")
+
+    env_choice = click.prompt("Select an Env", type=int)
+    if env_choice < 1 or env_choice > len(envs):
+        click.echo("❌ Invalid Env choice")
+        return
+
+    selected_env = envs[env_choice - 1]
+
+    # Filter ASGs for selected Env
+    matching_asgs = [asg for asg in asgs_onviobr if get_tags(asg).get("Env") == selected_env]
+
+    if not matching_asgs:
+        click.echo(f"❌ No ASGs found with Env={selected_env}")
         return
 
     # If multiple ASGs found, let user choose
-    click.echo("🔍 Matching ASGs:")
-    for i, asg in enumerate(filtered_asgs, 1):
+    click.echo(f"🔍 Matching ASGs with platfform=onviobr and Env={selected_env}:")
+    for i, asg in enumerate(matching_asgs, 1):
         click.echo(f"{i}. {asg['AutoScalingGroupName']}")
 
-    choice = click.prompt("Select an ASG", type=int)
-    if choice < 1 or choice > len(filtered_asgs):
-        click.echo("❌ Invalid choice")
+    asg_choice = click.prompt("Select an ASG", type=int)
+    if asg_choice < 1 or asg_choice > len(matching_asgs):
+        click.echo("❌ Invalid ASG choice")
         return
 
-    selected_asg = filtered_asgs[choice - 1]
+    selected_asg = matching_asgs[asg_choice - 1]
     asg_name = selected_asg["AutoScalingGroupName"]
 
     # Get instances from selected ASG
