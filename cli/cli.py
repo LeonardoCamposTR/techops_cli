@@ -110,40 +110,55 @@ def promoting_qa(service):
     commit_message = f"Promote {key} to QA: {lab_version}"
     git_commit_push(BASE_PATH, TARGET_FILE, commit_message)
 
+
+# -----------------------------
+# ASG Terminate Functions
+# -----------------------------
 @cli.command()
-@click.option("--prefix", default="onviobr-lab-lab01", help="Prefix for ASG names to search")
+@click.option("--name", required=True, help="Tag 'Name' value to search ASG")
+@click.option("--env", required=True, help="Tag 'Env' value to search ASG")
 @click.option("--profile", default="default", help="AWS profile from ~/.aws/credentials")
-def terminate_asg_instances(prefix, profile):
-    """Terminate all EC2 instances in a selected Auto Scaling Group."""
+@click.option("--region", default=None, help="AWS region (overrides ~/.aws/config)")
+def terminate_asg_instances(name, env, profile, region):
+    """Terminate all EC2 instances in an Auto Scaling Group filtered by tags Name and Env."""
     import boto3
 
-    # Load session from ~/.aws/credentials
-    session = boto3.Session(profile_name=profile)
+    # Session with credentials from ~/.aws/credentials
+    session = boto3.Session(profile_name=profile, region_name=region)
     client = session.client("autoscaling")
     ec2 = session.client("ec2")
 
-    # List ASGs
-    response = client.describe_auto_scaling_groups()
-    asgs = [asg for asg in response["AutoScalingGroups"] if asg["AutoScalingGroupName"].startswith(prefix)]
+    # List all ASGs
+    paginator = client.get_paginator("describe_auto_scaling_groups")
+    all_asgs = []
+    for page in paginator.paginate():
+        all_asgs.extend(page["AutoScalingGroups"])
 
-    if not asgs:
-        click.echo(f"❌ No ASGs found with prefix '{prefix}'")
+    # Filter ASGs by tags
+    def match_tags(asg):
+        tags = {t["Key"]: t["Value"] for t in asg.get("Tags", [])}
+        return tags.get("Name") == name and tags.get("Env") == env
+
+    filtered_asgs = [asg for asg in all_asgs if match_tags(asg)]
+
+    if not filtered_asgs:
+        click.echo(f"❌ No ASGs found with tags Name={name}, Env={env}")
         return
 
-    # Let user select ASG
-    click.echo("🔍 Available ASGs:")
-    for i, asg in enumerate(asgs, 1):
+    # If multiple ASGs found, let user choose
+    click.echo("🔍 Matching ASGs:")
+    for i, asg in enumerate(filtered_asgs, 1):
         click.echo(f"{i}. {asg['AutoScalingGroupName']}")
 
     choice = click.prompt("Select an ASG", type=int)
-    if choice < 1 or choice > len(asgs):
+    if choice < 1 or choice > len(filtered_asgs):
         click.echo("❌ Invalid choice")
         return
 
-    selected_asg = asgs[choice - 1]
+    selected_asg = filtered_asgs[choice - 1]
     asg_name = selected_asg["AutoScalingGroupName"]
 
-    # Get instances
+    # Get instances from selected ASG
     instance_ids = [inst["InstanceId"] for inst in selected_asg["Instances"]]
     if not instance_ids:
         click.echo(f"ℹ️ No instances found in ASG {asg_name}")
