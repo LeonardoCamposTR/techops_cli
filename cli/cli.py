@@ -114,11 +114,13 @@ def promoting_qa(service):
 # -----------------------------
 # ASG Terminate Functions
 # -----------------------------
-@cli.command()
+@cli.command("terminate-asg-instances")
+@click.argument("env")
 @click.option("--profile", default="default", help="AWS profile from ~/.aws/credentials")
 @click.option("--region", default=None, help="AWS region (overrides ~/.aws/config)")
-def terminate_asg_instances(profile, region):
+def terminate_asg_instances(env, profile, region):
     """Terminate all EC2 instances in an Auto Scaling Group filtered by tags (platfform=onviobr + Env)."""
+
     import boto3
 
     # Session with credentials from ~/.aws/credentials
@@ -142,33 +144,18 @@ def terminate_asg_instances(profile, region):
         click.echo("❌ No ASGs found with tag platfform=onviobr")
         return
 
-    # Collect available envs from these ASGs
-    envs = sorted({get_tags(asg).get("Env") for asg in asgs_onviobr if "Env" in get_tags(asg)})
-    if not envs:
-        click.echo("❌ No Env tags found in ASGs with platfform=onviobr")
-        return
-
-    # Ask user to choose Env
-    click.echo("🔍 Available Envs:")
-    for i, env in enumerate(envs, 1):
-        click.echo(f"{i}. {env}")
-
-    env_choice = click.prompt("Select an Env", type=int)
-    if env_choice < 1 or env_choice > len(envs):
-        click.echo("❌ Invalid Env choice")
-        return
-
-    selected_env = envs[env_choice - 1]
-
-    # Filter ASGs for selected Env
-    matching_asgs = [asg for asg in asgs_onviobr if get_tags(asg).get("Env") == selected_env]
+    # Filter ASGs by Env (case-insensitive)
+    matching_asgs = [
+        asg for asg in asgs_onviobr
+        if get_tags(asg).get("Env", "").lower() == env.lower()
+    ]
 
     if not matching_asgs:
-        click.echo(f"❌ No ASGs found with Env={selected_env}")
+        click.echo(f"❌ No ASGs found with platfform=onviobr and Env={env}")
         return
 
     # If multiple ASGs found, let user choose
-    click.echo(f"🔍 Matching ASGs with platfform=onviobr and Env={selected_env}:")
+    click.echo(f"🔍 Matching ASGs with platfform=onviobr and Env={env}:")
     for i, asg in enumerate(matching_asgs, 1):
         click.echo(f"{i}. {asg['AutoScalingGroupName']}")
 
@@ -192,6 +179,7 @@ def terminate_asg_instances(profile, region):
         click.echo("🚀 Termination initiated.")
     else:
         click.echo("❌ Termination cancelled.")
+
 
 def main():
     cli()
