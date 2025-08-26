@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import subprocess
 import os
+import boto3
 
 # -----------------------------
 # Paths
@@ -14,51 +15,25 @@ TARGET_FILE = BASE_PATH / "qa-qa01.json"
 # -----------------------------
 # Helper Functions
 # -----------------------------
-def validate_git_repo(repo_path: Path) -> bool:
-    """Check if Git repo is clean and up to date with remote."""
-    click.echo("🔍 Validating Git repository status...")
-
+def ensure_repo_up_to_date(repo_path: Path):
+    """Ensure the git repository is up to date before modifying files."""
+    click.echo("🔄 Checking if repository is up to date...")
     try:
-        # Fetch remote updates
         subprocess.run(["git", "-C", str(repo_path), "fetch"], check=True, capture_output=True)
-
-        # 1. Check for uncommitted changes
-        diff_result = subprocess.run(
-            ["git", "-C", str(repo_path), "status", "--porcelain=v1"],
-            check=True, capture_output=True, text=True
+        status_result = subprocess.run(
+            ["git", "-C", str(repo_path), "status", "-uno"],
+            capture_output=True, text=True, check=True
         )
-        if diff_result.stdout.strip():
-            click.echo("❌ Repository has uncommitted changes. Please commit or stash before proceeding.")
-            return False
-
-        # 2. Check for ahead/behind status
-        local_rev = subprocess.check_output(["git", "-C", str(repo_path), "rev-parse", "@"]).strip()
-        remote_rev = subprocess.check_output(["git", "-C", str(repo_path), "rev-parse", "@{u}"]).strip()
-        base_rev = subprocess.check_output(["git", "-C", str(repo_path), "merge-base", "@", "@{u}"]).strip()
-
-        if local_rev == remote_rev:
-            click.echo("✅ Repository is clean and up to date.")
-            return True
-        elif local_rev == base_rev:
-            click.echo("❌ Repository is behind remote. Please pull latest changes before proceeding.")
-            return False
-        elif remote_rev == base_rev:
-            click.echo("❌ Repository has local commits not pushed. Please push before proceeding.")
-            return False
-        else:
-            click.echo("❌ Repository has diverged from remote. Please resolve before proceeding.")
-            return False
-
+        if "Your branch is up to date" not in status_result.stdout:
+            click.echo("❌ Repository is not up to date. Please pull the latest changes first.")
+            raise click.Abort()
+        click.echo("✅ Repository is up to date.")
     except subprocess.CalledProcessError as e:
-        click.echo(f"❌ Failed to validate repository: {e}")
-        return False
-    except subprocess.SubprocessError as e:
         click.echo(f"❌ Git check failed: {e}")
-        return False
+        raise click.Abort()
 
-
-def git_commit_push_or_revert(repo_path: Path, file_path: Path, commit_message: str):
-    """Commit and push a file to Git or revert if user declines."""
+def git_commit_push(repo_path: Path, file_path: Path, commit_message: str):
+    """Commit and push a file to Git in the given repository."""
     click.echo(f"⚡ About to commit and push {file_path} with message:\n  '{commit_message}'")
     if click.confirm("Do you want to proceed?", default=True):
         try:
@@ -69,10 +44,10 @@ def git_commit_push_or_revert(repo_path: Path, file_path: Path, commit_message: 
         except subprocess.CalledProcessError as e:
             click.echo(f"❌ Git command failed: {e}")
     else:
-        click.echo("❌ Commit cancelled. Reverting changes...")
+        click.echo("❌ Commit and push cancelled. Running `git restore` to revert file...")
         try:
             subprocess.run(["git", "-C", str(repo_path), "restore", str(file_path)], check=True)
-            click.echo(f"♻️  Changes reverted: {file_path}")
+            click.echo("↩️  Changes reverted successfully.")
         except subprocess.CalledProcessError as e:
             click.echo(f"❌ Failed to revert changes: {e}")
 
@@ -90,11 +65,8 @@ def cli():
 @cli.command()
 @click.argument("service")
 def promoting_qa(service):
-    """Update QA JSON with version from LAB JSON for a given service (case-insensitive) and optionally commit/push."""
-
-    # 🔒 Validate repo first
-    if not validate_git_repo(BASE_PATH):
-        return
+    """Update QA JSON with version from LAB JSON for a given service and optionally commit/push."""
+    ensure_repo_up_to_date(BASE_PATH)
 
     if not SOURCE_FILE.exists():
         click.echo(f"❌ LAB file not found: {SOURCE_FILE}")
@@ -111,81 +83,77 @@ def promoting_qa(service):
     with TARGET_FILE.open() as f:
         qa_data = json.load(f)
 
-    lab_services = lab_data.get("services", {})
-    qa_services = qa_data.setdefault("services", {})
-
-    # Normalize service names (case-insensitive)
-    lab_lookup = {k.lower(): (k, v) for k, v in lab_services.items()}
-    qa_lookup = {k.lower(): (k, v) for k, v in qa_services.items()}
-
-    # Match service ignoring case
-    service_lower = service.lower()
-    if service_lower not in lab_lookup:
+    # Case-insensitive search
+    service_map = {k.lower(): k for k in lab_data.get("services", {})}
+    key = service_map.get(service.lower())
+    if not key:
         click.echo(f"❌ Service '{service}' not found in LAB file.")
         return
 
-    lab_key, lab_version = lab_lookup[service_lower]
-    old_version = qa_lookup.get(service_lower, (service, None))[1]
+    # Get version from LAB
+    lab_version = lab_data["services"][key]
 
-    # Update QA JSON
-    qa_services[lab_key] = lab_version
+    # Update QA JSON immediately
+    qa_services = qa_data.setdefault("services", {})
+    old_version = qa_services.get(key)
+    qa_services[key] = lab_version
 
     # Save QA JSON
     with TARGET_FILE.open("w") as f:
         json.dump(qa_data, f, indent=2)
 
     click.echo(f"💾 QA file updated: {TARGET_FILE}")
-    click.echo(f"⚡ {lab_key}: {old_version or 'not present'} → {lab_version}")
-    click.echo("ℹ️  You can now run `git status` outside the CLI to review changes.")
+    click.echo(f"⚡ {key}: {old_version or 'not present'} → {lab_version}")
+    click.echo("You can now run `git status` outside the CLI to review changes.")
 
-    # Ask user confirmation to commit & push or revert
-    commit_message = f"Promote {lab_key} to QA: {lab_version}"
-    git_commit_push_or_revert(BASE_PATH, TARGET_FILE, commit_message)
-
-
+    # Ask user confirmation to commit & push
+    commit_message = f"Promote {key} to QA: {lab_version}"
+    git_commit_push(BASE_PATH, TARGET_FILE, commit_message)
 
 # -----------------------------
-# Terminate ASG Instances
+# Terminate EC2 instances in ASG
 # -----------------------------
 @cli.command()
-@click.argument("asg_name")
-@click.option("--region", default="us-east-1", help="AWS region (default: us-east-1)")
-def terminate_asg(asg_name, region):
-    """Terminate ALL EC2 instances in a given Auto Scaling Group (ASG)."""
+@click.option("--prefix", default="onviobr-lab-lab01", help="Prefix for ASG names to search")
+def terminate_asg_instances(prefix):
+    """Terminate all EC2 instances in a selected Auto Scaling Group."""
+    client = boto3.client("autoscaling")
+    ec2 = boto3.client("ec2")
 
-    click.echo(f"🔍 Looking up ASG: {asg_name} in region {region}...")
+    # List ASGs
+    response = client.describe_auto_scaling_groups()
+    asgs = [asg for asg in response["AutoScalingGroups"] if asg["AutoScalingGroupName"].startswith(prefix)]
 
-    client_asg = boto3.client("autoscaling", region_name=region)
-    client_ec2 = boto3.client("ec2", region_name=region)
+    if not asgs:
+        click.echo(f"❌ No ASGs found with prefix '{prefix}'")
+        return
 
-    try:
-        response = client_asg.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
-        if not response["AutoScalingGroups"]:
-            click.echo(f"❌ No ASG found with name {asg_name}")
-            return
+    # Let user select ASG
+    click.echo("🔍 Available ASGs:")
+    for i, asg in enumerate(asgs, 1):
+        click.echo(f"{i}. {asg['AutoScalingGroupName']}")
 
-        asg = response["AutoScalingGroups"][0]
-        instance_ids = [i["InstanceId"] for i in asg.get("Instances", [])]
+    choice = click.prompt("Select an ASG", type=int)
+    if choice < 1 or choice > len(asgs):
+        click.echo("❌ Invalid choice")
+        return
 
-        if not instance_ids:
-            click.echo("ℹ️  No instances currently running in this ASG.")
-            return
+    selected_asg = asgs[choice - 1]
+    asg_name = selected_asg["AutoScalingGroupName"]
 
-        click.echo(f"⚡ Terminating {len(instance_ids)} instances: {', '.join(instance_ids)}")
+    # Get instances
+    instance_ids = [inst["InstanceId"] for inst in selected_asg["Instances"]]
+    if not instance_ids:
+        click.echo(f"ℹ️ No instances found in ASG {asg_name}")
+        return
 
-        if click.confirm("Do you want to proceed with termination?", default=False):
-            client_ec2.terminate_instances(InstanceIds=instance_ids)
-            click.echo("🚀 Termination initiated.")
-        else:
-            click.echo("❌ Termination cancelled.")
+    click.echo(f"⚡ Terminating instances in ASG {asg_name}: {', '.join(instance_ids)}")
+    if click.confirm("Do you want to proceed?", default=False):
+        ec2.terminate_instances(InstanceIds=instance_ids)
+        click.echo("🚀 Termination initiated.")
+    else:
+        click.echo("❌ Termination cancelled.")
 
-    except Exception as e:
-        click.echo(f"❌ Failed to terminate ASG instances: {e}")
-
-
-# -----------------------------
-# Main Entry
-# -----------------------------
 def main():
     cli()
 
