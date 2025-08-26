@@ -130,12 +130,12 @@ def run_aws_cli(command: list) -> dict:
 
 @cli.command("terminate-asg-instances")
 @click.argument("env")
-@click.option("--profile", default="default", help="AWS profile (from ~/.aws/credentials)")
+@click.option("--profile", default="NON-PROD", help="AWS profile (from ~/.aws/credentials)")
 @click.option("--region", default=None, help="AWS region (overrides ~/.aws/config)")
 def terminate_asg_instances(env, profile, region):
     """
     Terminate all EC2 instances in an Auto Scaling Group
-    filtered by tags: platfform=onviobr + Env=<env>.
+    filtered by tags: platform=onviobr + Env=<env>.
     """
 
     # Build base AWS CLI args
@@ -159,7 +159,7 @@ def terminate_asg_instances(env, profile, region):
     matching_asgs = []
     for asg in asgs:
         tags = {t["Key"]: t["Value"] for t in asg.get("Tags", [])}
-        if tags.get("platfform") == "onviobr" and tags.get("Env", "").lower() == env.lower():
+        if tags.get("platform") == "onviobr" and tags.get("name", "").lower() == env.lower():
             matching_asgs.append(asg)
 
     if not matching_asgs:
