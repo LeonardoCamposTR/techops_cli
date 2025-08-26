@@ -142,6 +142,47 @@ def promoting_qa(service):
     commit_message = f"Promote {lab_key} to QA: {lab_version}"
     git_commit_push_or_revert(BASE_PATH, TARGET_FILE, commit_message)
 
+
+
+# -----------------------------
+# Terminate ASG Instances
+# -----------------------------
+@cli.command()
+@click.argument("asg_name")
+@click.option("--region", default="us-east-1", help="AWS region (default: us-east-1)")
+def terminate_asg(asg_name, region):
+    """Terminate ALL EC2 instances in a given Auto Scaling Group (ASG)."""
+
+    click.echo(f"🔍 Looking up ASG: {asg_name} in region {region}...")
+
+    client_asg = boto3.client("autoscaling", region_name=region)
+    client_ec2 = boto3.client("ec2", region_name=region)
+
+    try:
+        response = client_asg.describe_auto_scaling_groups(AutoScalingGroupNames=[asg_name])
+        if not response["AutoScalingGroups"]:
+            click.echo(f"❌ No ASG found with name {asg_name}")
+            return
+
+        asg = response["AutoScalingGroups"][0]
+        instance_ids = [i["InstanceId"] for i in asg.get("Instances", [])]
+
+        if not instance_ids:
+            click.echo("ℹ️  No instances currently running in this ASG.")
+            return
+
+        click.echo(f"⚡ Terminating {len(instance_ids)} instances: {', '.join(instance_ids)}")
+
+        if click.confirm("Do you want to proceed with termination?", default=False):
+            client_ec2.terminate_instances(InstanceIds=instance_ids)
+            click.echo("🚀 Termination initiated.")
+        else:
+            click.echo("❌ Termination cancelled.")
+
+    except Exception as e:
+        click.echo(f"❌ Failed to terminate ASG instances: {e}")
+
+
 # -----------------------------
 # Main Entry
 # -----------------------------
