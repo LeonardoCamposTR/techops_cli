@@ -5,12 +5,13 @@ import subprocess
 import os
 import shutil
 import tempfile
+from InquirerPy import inquirer
 
 # -----------------------------
 # Repo Info
 # -----------------------------
-REPO_URL = "git@gitlab.com:your-org/your-repo.git"
-REPO_SUBDIR = "onvio/deployer"
+REPO_URL = "git@github.com:tr/a202606_mastersafdevops-apidata.git"
+REPO_SUBDIR = "onviobr/deployer"
 
 # Default files (used only by promoting_qa)
 SOURCE_FILE = "lab-lab01.json"
@@ -201,7 +202,7 @@ def terminate_asg_instances(env, profile, region):
     matching_asgs = [
         asg for asg in asgs
         if any(t["Key"] == "platform" and t["Value"] == "onviobr" for t in asg.get("Tags", []))
-        and any(t["Key"] == "Name" and t["Value"].lower() == env.lower() for t in asg.get("Tags", []))
+        and any(t["Key"] == "name" and t["Value"].lower() == env.lower() for t in asg.get("Tags", []))
     ]
 
     if not matching_asgs:
