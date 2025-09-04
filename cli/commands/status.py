@@ -116,37 +116,47 @@ def status(services):
             else:
                 print(f"⚠️ No /api location found in {filename}")
 
-    # =========================
-    # 🌐 Perform HTTP Requests & Print
-    # =========================
-    for env in ENVIRONMENTS:
-        print(f"\n============================")
-        print(f"🌐 Environment: {env.upper()}")
-        print("============================")
-        env_services = report.get(env, {})
-        for svc, urls in env_services.items():
-            print(f"\n{svc}:")
-            for url in urls:
-                try:
-                    response = requests.get(url, timeout=TIMEOUT)
-                    status_code = response.status_code
-                    text = response.text.strip()
-                    if status_code == 200:
-                        err_line = find_error_line(text)
-                        if err_line:
-                            print(f"  {url} - ⚠️ FAILED in response")
-                            print(f"    Line: {err_line}")
+        # =========================
+        # 🌐 Perform HTTP Requests & Print - Cleaned Version
+        # =========================
+        for env in ENVIRONMENTS:
+            print(f"\n============================")
+            print(f"🌐 Environment: {env.upper()}")
+            print("============================")
+            env_services = report.get(env, {})
+            for svc, urls in env_services.items():
+                ok_count = 0
+                fail_count = 0
+                print(f"\n📌 Service: {svc}")
+                print(f"{'URL':70} | STATUS")
+                print("-" * 85)
+                for url in urls:
+                    try:
+                        response = requests.get(url, timeout=TIMEOUT)
+                        status_code = response.status_code
+                        text = response.text.strip()
+                        if status_code == 200:
+                            err_line = find_error_line(text)
+                            if err_line:
+                                status = "⚠️ FAILED"
+                                fail_count += 1
+                            else:
+                                status = "✅ OK"
+                                ok_count += 1
+                        elif status_code == 404:
+                            status = "❌ 404 NOT FOUND"
+                            fail_count += 1
+                        elif 500 <= status_code <= 599:
+                            status = f"❌ HTTP {status_code}"
+                            fail_count += 1
                         else:
-                            print(f"  {url} - ✅ OK")
-                    elif status_code == 404:
-                        print(f"  {url} - ❌ HTTP 404 NOT FOUND")
-                    elif 500 <= status_code <= 599:
-                        print(f"  {url} - ❌ HTTP {status_code} (Server Error)")
-                    else:
-                        print(f"  {url} - ❌ HTTP {status_code}")
-                except requests.exceptions.RequestException as e:
-                    print(f"  {url} - ❌ CONNECTION ERROR ({e})")
-
+                            status = f"❌ HTTP {status_code}"
+                            fail_count += 1
+                    except requests.exceptions.RequestException as e:
+                        status = f"❌ CONNECTION ERROR"
+                        fail_count += 1
+                    print(f"{url:70} | {status}")
+                print(f"\nSummary: ✅ OK: {ok_count} | ❌ Failed: {fail_count}")
     # =========================
     # 🧹 Cleanup
     # =========================
