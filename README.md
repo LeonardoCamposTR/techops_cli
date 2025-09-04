@@ -26,33 +26,34 @@ pip install -e .
 ## Usage
 
 
+
 Run the CLI using:
 
 ```bash
-python -m cli <command> [options]
+techops <command> [options]
 ```
 
 ### Real Command Examples
 
 - Promote services from LAB to QA:
 	```bash
-	python -m cli promoting-qa <service1> <service2> ...
+	techops promoting-qa <service1> <service2> ...
 	```
 - Promote services from QA to SAT:
 	```bash
-	python -m cli promoting-sat <service1> <service2> ...
+	techops promoting-sat <service1> <service2> ...
 	```
 - Check status of multiple services:
 	```bash
-	python -m cli status <service1> <service2> ...
+	techops status <service1> <service2> ...
 	```
 - AWS login (multi-login):
 	```bash
-	python -m cli aws login
+	techops aws login
 	```
 - Connect to an instance via SSM:
 	```bash
-	python -m cli aws connect <env> <service> --region <region>
+	techops aws connect <env> <service> --region <region>
 	```
 
 ## Command Structure
