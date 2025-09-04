@@ -5,7 +5,7 @@ import tempfile
 import shutil
 from pathlib import Path
 
-REPO_URL = "github.com/leonardoscampos/apidata.git"
+REPO_URL = "git@github.com:tr/a202606_mastersafdevops-tools-apidata.git"
 REPO_SUBDIR = "onviobr/deployer"
 
 def run_cmd(cmd, cwd=None, check=True, capture_output=False):

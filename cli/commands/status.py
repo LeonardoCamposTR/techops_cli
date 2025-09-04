@@ -10,10 +10,10 @@ import click
 # =========================
 # 🔧 Configurations
 # =========================
-REPO_URL = "git@github.com:yourorg/yourrepo.git"
-BRANCH = "develop"  # Hardcoded branch
+REPO_URL = "git@github.com:tr/a202606_mastersafdevops-tools-builder.git"
+BRANCH = "feature/0.13.0-onviobr-ami-baking"  # Hardcoded branch
 LOCAL_REPO_PATH = Path("/tmp/techops_status_repo")
-CONFIG_SUBPATH = "resources/nginx/etc/nginx/locations"
+CONFIG_SUBPATH = "onviobr/resources/nginx/etc/nginx/locations"
 
 # ENVIRONMENTS
 ENVIRONMENTS = ["lab", "qa", "sat", "prod"]
