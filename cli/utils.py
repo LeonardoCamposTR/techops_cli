@@ -19,8 +19,81 @@ def git_commit_push(repo_path: Path, files: list[str], commit_message: str):
     run_cmd(["git", "push"], cwd=repo_path)
 
 def promote_services(services, source_file, target_file):
-    # 🔁 paste your promote logic here (same as before)
-    pass
+    """
+    Shared logic for promoting services from one JSON file to another.
+    """
+    if not services:
+        click.echo("❌ Please provide at least one service name.")
+        return
+
+    # Clone repo into a temporary directory
+    tmpdir = Path(tempfile.mkdtemp(prefix="repo_clone_"))
+    click.echo(f"📥 Cloning repository into {tmpdir} ...")
+    run_cmd(["git", "clone", REPO_URL, str(tmpdir)])
+
+    repo_path = tmpdir
+    deployer_path = repo_path / REPO_SUBDIR
+    src_file = deployer_path / source_file
+    tgt_file = deployer_path / target_file
+
+    if not src_file.exists():
+        click.echo(f"❌ Source file not found: {src_file}")
+        shutil.rmtree(tmpdir)
+        return
+    if not tgt_file.exists():
+        click.echo(f"❌ Target file not found: {tgt_file}")
+        shutil.rmtree(tmpdir)
+        return
+
+    # Load source & target JSON
+    with src_file.open() as f:
+        src_data = json.load(f)
+    with tgt_file.open() as f:
+        tgt_data = json.load(f)
+
+    src_services = src_data.get("services", {})
+    tgt_services = tgt_data.setdefault("services", {})
+
+    updates = []
+    for svc in services:
+        # Case-insensitive lookup
+        match = next((k for k in src_services if k.lower() == svc.lower()), None)
+        if not match:
+            click.echo(f"⚠️ Service '{svc}' not found in source file.")
+            continue
+
+        new_version = src_services[match]
+        old_version = tgt_services.get(match)
+        if old_version == new_version:
+            click.echo(f"ℹ️ {match} already at version {new_version}, no change.")
+            continue
+
+        tgt_services[match] = new_version
+        updates.append((match, old_version, new_version))
+
+    if not updates:
+        click.echo("✅ No updates applied.")
+        shutil.rmtree(tmpdir)
+        return
+
+    # Save updated target JSON
+    with tgt_file.open("w") as f:
+        json.dump(tgt_data, f, indent=2)
+
+    click.echo(f"💾 Target file updated: {tgt_file}")
+    for svc, old, new in updates:
+        click.echo(f"⚡ {svc}: {old or 'not present'} → {new}")
+
+    # Commit & push
+    commit_message = f"Promote services from {source_file} → {target_file}:\n" + "\n".join(
+        [f"- {svc}: {old or 'none'} → {new}" for svc, old, new in updates]
+    )
+    git_commit_push(repo_path, [str(tgt_file)], commit_message)
+
+    # Cleanup repo
+    click.echo("🧹 Cleaning up local clone...")
+    shutil.rmtree(tmpdir)
+    click.echo("✅ Done.")
 
 def run_aws_cli(command: list) -> dict:
     try:
