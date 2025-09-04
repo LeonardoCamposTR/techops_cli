@@ -7,21 +7,6 @@ from cli.utils import run_aws_cli
 @click.argument("env")
 @click.option("--profile", default="NON-PROD", help="AWS profile")
 @click.option("--region", default=None, help="AWS region")
-
-def run_aws_cli(command: list) -> dict:
-    """Run AWS CLI command and return parsed JSON output."""
-    try:
-        result = subprocess.run(
-            ["aws"] + command + ["--output", "json"],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return json.loads(result.stdout)
-    except subprocess.CalledProcessError as e:
-        click.echo(f"❌ AWS CLI command failed: {e.stderr}")
-        raise
-
 def terminate_asg_instances(env, profile, region):
     """
     Terminate all EC2 instances in one or more Auto Scaling Groups
@@ -93,5 +78,4 @@ def terminate_asg_instances(env, profile, region):
             click.echo("🚀 Termination initiated.")
         else:
             click.echo(f"❌ Termination cancelled for ASG {asg_name}.")
-            
     click.echo(f"Terminate ASG instances for {env} (profile={profile}, region={region})")
