@@ -5,11 +5,11 @@ import tempfile
 import shutil
 from pathlib import Path
 
-REPO_URL = "git@github.com:tr/a202606_mastersafdevops-tools-apidata.git"
+REPO_URL = "git@github.com:tr/a202606_mastersafdevops-apidata.git"
 REPO_SUBDIR = "onviobr/deployer"
 
 def run_cmd(cmd, cwd=None, check=True, capture_output=False):
-    result = subprocess.run(cmd, cwd=cwd, check=check, text=True, capture_output=capture_output)
+    result = subprocess.run(cmd, cwd=cwd, check=check, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True, capture_output=capture_output)
     return result.stdout.strip() if capture_output else None
 
 def git_commit_push(repo_path: Path, files: list[str], commit_message: str):
