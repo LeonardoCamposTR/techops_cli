@@ -129,69 +129,99 @@ def status(services):
                             results[svc][env][url] = {"status": None, "error_line": None}
 
         # =========================
-        # 🌐 Perform HTTP Requests
+        # 🌐 Perform HTTP Requests and organize by environment
         # =========================
-        print("\n🔍 Request Results:\n")
+        results = {}  # Structure: { service: { env: { url: {status, error_line} } } }
+
+        for svc, urls in output.items():
+            results[svc] = {}
+            suffixes = service_suffix_map[svc]
+            for url in urls:
+                env = next((e for e in ENVIRONMENTS if e in url.lower()), "prod")  # crude env detection
+                if env not in results[svc]:
+                    results[svc][env] = {}
+
+                matched_suffix = next((s for s in suffixes if url.endswith(s)), None)
+                info = {"status": None, "error_line": None}
+
+                try:
+                    response = requests.get(url, timeout=TIMEOUT)
+                    info["status"] = response.status_code
+                    if response.status_code == 200:
+                        err_line = find_error_line(response.text)
+                        info["error_line"] = err_line
+                except requests.exceptions.RequestException as e:
+                    info["status"] = f"CONNECTION ERROR ({e})"
+
+                results[svc][env][url] = info
+
+        # =========================
+        # 📝 Pretty Report: Detailed + Environment Summary
+        # =========================
+        service_ok_count = 0
+        total_services = len(results)
+
+        print("\n==========================")
+        print("🔍 DETAILED URL REPORT")
+        print("==========================\n")
 
         for svc, env_data in results.items():
             print(f"{svc}:")
-            for env, urls in env_data.items():
-                print(f"  [{env}]")
-                for url in urls.keys():
-                    try:
-                        response = requests.get(url, timeout=TIMEOUT)
-                        status_code = response.status_code
-                        text = response.text.strip()
-                        urls[url]["status"] = status_code
-
-                        if status_code == 200:
-                            err_line = find_error_line(text)
-                            if err_line:
-                                urls[url]["error_line"] = err_line
-                                print(f"    {url} - ⚠️ FAILED in response")
-                                print(f"       Line: {err_line}")
-                            else:
-                                print(f"    {url} - ✅ OK")
-                        elif status_code == 404:
-                            print(f"    {url} - ❌ HTTP 404 NOT FOUND")
-                        elif 500 <= status_code <= 599:
-                            print(f"    {url} - ❌ HTTP {status_code} (Server Error)")
-                            services_with_5xx.add(svc)
-                        else:
-                            print(f"    {url} - ❌ HTTP {status_code}")
-
-                    except requests.exceptions.RequestException as e:
-                        urls[url]["status"] = "CONNECTION ERROR"
-                        print(f"    {url} - ❌ CONNECTION ERROR ({e})")
-                        services_with_5xx.add(svc)
+            service_has_error = False
+            for env, urls_info in env_data.items():
+                print(f"  [{env.upper()}]")
+                for url, info in urls_info.items():
+                    status = info["status"]
+                    err_line = info.get("error_line")
+                    if status == 200 and not err_line:
+                        print(f"    {url} - ✅ OK")
+                    elif isinstance(status, int) and 500 <= status <= 599:
+                        print(f"    {url} - ❌ HTTP {status} (Server Error)")
+                        service_has_error = True
+                    elif status == 404:
+                        print(f"    {url} - ❌ HTTP 404 NOT FOUND")
+                        service_has_error = True
+                    elif err_line:
+                        print(f"    {url} - ⚠️ FAILED in response")
+                        print(f"      Line: {err_line}")
+                        service_has_error = True
+                    else:
+                        print(f"    {url} - ❌ {status}")
+                        service_has_error = True
+                print()
+            if not service_has_error:
+                service_ok_count += 1
 
         # =========================
-        # 📝 Pretty Report by Environment
+        # 🌐 Summary by environment
         # =========================
         print("\n==========================")
-        print("📝 REPORT BY ENVIRONMENT")
+        print("📊 SUMMARY BY ENVIRONMENT")
         print("==========================\n")
 
         for env in ENVIRONMENTS:
-            print(f"Environment: {env.upper()}")
+            total_ok = total_5xx = total_404 = total_failed_content = 0
             for svc, env_data in results.items():
-                if env in env_data:
-                    urls = env_data[env]
-                    for url, info in urls.items():
-                        status = info["status"]
-                        err_line = info.get("error_line")
-                        line_info = f" - {err_line}" if err_line else ""
-                        print(f"  {svc}: {url} - {status}{line_info}")
+                if env not in env_data:
+                    continue
+                for url, info in env_data[env].items():
+                    status = info["status"]
+                    err_line = info.get("error_line")
+                    if status == 200 and not err_line:
+                        total_ok += 1
+                    elif isinstance(status, int) and 500 <= status <= 599:
+                        total_5xx += 1
+                    elif status == 404:
+                        total_404 += 1
+                    elif err_line:
+                        total_failed_content += 1
+            print(f"Environment: {env.upper()}")
+            print(f"  ✅ OK URLs: {total_ok}")
+            print(f"  ❌ 5xx Errors: {total_5xx}")
+            print(f"  ❌ 404 Errors: {total_404}")
+            print(f"  ⚠️ Failed Content: {total_failed_content}")
             print("---------------------------------------------")
-
-        if services_with_5xx:
-            print("❌ Services with 500+ errors:")
-            for s in sorted(services_with_5xx):
-                print(f"- {s}")
-        else:
-            print("✅ No services with 500+ errors")
-        print("==============================================")
-
+            
     finally:
         # Always cleanup the repo
         cleanup_repo()
