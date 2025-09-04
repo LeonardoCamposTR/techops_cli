@@ -3,10 +3,6 @@ import subprocess
 from InquirerPy import inquirer
 from cli.utils import run_aws_cli
 
-def quit_prompt(prompt):
-    """Exit the prompt immediately when 'q' is pressed."""
-    prompt.exit(result=None)
-
 @click.command("terminate-asg-instances")
 @click.argument("env")
 @click.option("--profile", default="preprod", help="AWS profile")
@@ -48,17 +44,19 @@ def terminate_asg_instances(env, profile, region):
     # Build choices for checkbox
     choices = [asg["AutoScalingGroupName"] for asg in matching_asgs]
 
-    # Checkbox prompt with 'q' keybinding to exit immediately
-    selected_asgs = inquirer.checkbox(
-        message="Select ASG(s) to terminate (press SPACE to select, ENTER to confirm, q to exit):",
-        choices=choices,
-        instruction="Use SPACE to select, ENTER to confirm, q to quit",
-        keybindings={"q": quit_prompt}
-    ).execute()
+    # Prompt user to select ASGs; Ctrl+C can be used to exit
+    try:
+        selected_asgs = inquirer.checkbox(
+            message="Select ASG(s) to terminate (press SPACE to select, ENTER to confirm):",
+            choices=choices,
+            instruction="Use SPACE to select, ENTER to confirm, Ctrl+C to quit"
+        ).execute()
+    except KeyboardInterrupt:
+        click.echo("\n❌ Exiting by user interrupt.")
+        return
 
-    # Exit if user pressed q or selected nothing
     if not selected_asgs:
-        click.echo("❌ Exiting.")
+        click.echo("❌ No ASGs selected. Exiting.")
         return
 
     click.echo(f"⚡ Selected ASGs: {', '.join(selected_asgs)}")
