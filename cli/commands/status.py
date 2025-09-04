@@ -72,7 +72,9 @@ def status(services):
         else:
             service_suffix_map[svc] = DEFAULT_SUFFIXES
 
-    # Iterate services
+    # =========================
+    # 🔍 Build URLs
+    # =========================
     for svc in services:
         matching_files = [f for f in os.listdir(config_folder)
                           if f.lower().startswith(svc.lower()) and f.endswith(".conf")]
@@ -114,53 +116,82 @@ def status(services):
                 print(f"⚠️ No /api location found in {filename}")
 
     # =========================
-    # 🌐 Perform HTTP Requests & Print - Professional Table
+    # 🌐 Perform HTTP Requests & Print Detailed Status
     # =========================
     for env in ENVIRONMENTS:
         print(f"\n============================")
         print(f"🌐 Environment: {env.upper()}")
         print("============================")
-
         env_services = report.get(env, {})
-        if not env_services:
-            print("⚠️ No services found for this environment")
-            continue
 
-        # Calculate dynamic widths
-        max_service_len = max((len(svc) for svc in env_services.keys()), default=7)
-        ok_width = max(len("OK"), 2)
-        fail_width = max(len("FAILED"), 6)
-
-        # Table header
-        header_fmt = f"{{:<{max_service_len}}} | {{:>{ok_width}}} | {{:>{fail_width}}}"
-        print(header_fmt.format("SERVICE", "OK", "FAILED"))
-        print("-" * (max_service_len + ok_width + fail_width + 6))  # 6 for separators
+        # Determine column width automatically
+        svc_width = max([len(svc) for svc in env_services.keys()] + [7])
+        url_width = 70
+        print(f"{'SERVICE':<{svc_width}} | {'URL':<{url_width}} | STATUS")
+        print("-" * (svc_width + url_width + 10))
 
         for svc, urls in env_services.items():
             ok_count = 0
             fail_count = 0
-            failed_urls = []
-
             for url in urls:
                 try:
                     response = requests.get(url, timeout=TIMEOUT)
                     status_code = response.status_code
                     text = response.text.strip()
-                    if status_code == 200 and not find_error_line(text):
-                        ok_count += 1
-                    else:
+                    if status_code == 200:
+                        err_line = find_error_line(text)
+                        if err_line:
+                            status = "⚠️ FAILED"
+                            fail_count += 1
+                        else:
+                            status = "✅ OK"
+                            ok_count += 1
+                    elif status_code == 404:
+                        status = "❌ 404 NOT FOUND"
                         fail_count += 1
-                        failed_urls.append(f"{url} ({status_code})")
+                    elif 500 <= status_code <= 599:
+                        status = f"❌ HTTP {status_code}"
+                        fail_count += 1
+                    else:
+                        status = f"❌ HTTP {status_code}"
+                        fail_count += 1
                 except requests.exceptions.RequestException:
+                    status = f"❌ CONNECTION ERROR"
                     fail_count += 1
-                    failed_urls.append(f"{url} (CONNECTION ERROR)")
+                print(f"{svc:<{svc_width}} | {url:<{url_width}} | {status}")
 
-            # Print service summary
-            print(header_fmt.format(svc, ok_count, fail_count))
+            print(f"\nSummary for {svc}: ✅ OK: {ok_count} | ❌ Failed: {fail_count}")
+            print("-" * (svc_width + url_width + 10))
 
-            # Optional: print failed URLs
-            for fail_url in failed_urls:
-                print(f"   ❌ {fail_url}")
+    # =========================
+    # 📊 SUMMARY BY ENVIRONMENT
+    # =========================
+    print("\n============================")
+    print("📊 SUMMARY BY ENVIRONMENT")
+    print("============================")
+    summary_header = f"{'ENVIRONMENT':<12} | STATUS"
+    print(summary_header)
+    print("-" * (len(summary_header)+5))
+
+    for env in ENVIRONMENTS:
+        env_services = report.get(env, {})
+        all_ok = True
+        for svc, urls in env_services.items():
+            for url in urls:
+                try:
+                    response = requests.get(url, timeout=TIMEOUT)
+                    status_code = response.status_code
+                    text = response.text.strip()
+                    if status_code != 200 or find_error_line(text):
+                        all_ok = False
+                        break
+                except requests.exceptions.RequestException:
+                    all_ok = False
+                    break
+            if not all_ok:
+                break
+        status_symbol = "✅" if all_ok else "❌"
+        print(f"{env.upper():<12} | {status_symbol}")
 
     # =========================
     # 🧹 Cleanup
@@ -168,6 +199,7 @@ def status(services):
     if LOCAL_REPO_PATH.exists():
         shutil.rmtree(LOCAL_REPO_PATH)
         print(f"\n🧹 Cleaned up local repo {LOCAL_REPO_PATH}")
+
 
 if __name__ == "__main__":
     status()

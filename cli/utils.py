@@ -1,205 +1,109 @@
-#!/usr/bin/env python3
-import os
-import re
 import subprocess
-import sys
+import click
+import json
+import tempfile
 import shutil
 from pathlib import Path
-import requests
-import click
 
-# =========================
-# 🔧 Configurations
-# =========================
-REPO_URL = "git@github.com:tr/a202606_mastersafdevops-tools-builder.git"
-BRANCH = "feature/0.13.0-onviobr-ami-baking"  # Hardcoded branch
-LOCAL_REPO_PATH = Path("/tmp/techops_status_repo")
-CONFIG_SUBPATH = "onviobr/resources/nginx/etc/nginx/locations"
+REPO_URL = "git@github.com:tr/a202606_mastersafdevops-tools-apidata.git"
+REPO_SUBDIR = "onviobr/deployer"
 
-# ENVIRONMENTS
-ENVIRONMENTS = ["lab", "qa", "sat", "prod"]
+def run_cmd(cmd, cwd=None, check=True, capture_output=False):
+    result = subprocess.run(cmd, cwd=cwd, check=check, text=True, capture_output=capture_output)
+    return result.stdout.strip() if capture_output else None
 
-# Default suffixes
-DEFAULT_SUFFIXES = ["v1/statuscheck", "v1/resourcecheck", "v1/resourceinspect"]
-# Special suffixes for bremployeeportal
-BREMPL_SUFFIXES = ["healthcheck"]
+def git_commit_push(repo_path: Path, files: list[str], commit_message: str):
+    click.echo(f"⚡ About to commit and push:\n{commit_message}")
+    run_cmd(["git", "add"] + files, cwd=repo_path)
+    run_cmd(["git", "commit", "-m", commit_message], cwd=repo_path)
+    run_cmd(["git", "push"], cwd=repo_path)
 
-# Regex to extract nginx locations
-LOCATION_REGEX = re.compile(r'location\s+([^\s{]+)')
+def promote_services(services, source_file, target_file):
+    """
+    Shared logic for promoting services from one JSON file to another.
+    """
+    if not services:
+        click.echo("❌ Please provide at least one service name.")
+        return
 
-TIMEOUT = 5
+    # Clone repo into a temporary directory
+    tmpdir = Path(tempfile.mkdtemp(prefix="repo_clone_"))
+    click.echo(f"📥 Cloning repository into {tmpdir} ...")
+    run_cmd(["git", "clone", REPO_URL, str(tmpdir)])
 
-# =========================
-# 📝 Functions
-# =========================
-def git_clone_or_update():
-    """Clone repo if missing, else pull latest branch"""
-    if LOCAL_REPO_PATH.exists():
-        print(f"📦 Repo exists, pulling latest changes in {BRANCH} branch...")
-        subprocess.run(["git", "-C", str(LOCAL_REPO_PATH), "fetch"], check=True)
-        subprocess.run(["git", "-C", str(LOCAL_REPO_PATH), "checkout", BRANCH], check=True)
-        subprocess.run(["git", "-C", str(LOCAL_REPO_PATH), "pull", "origin", BRANCH], check=True)
-    else:
-        print(f"📦 Cloning repo {REPO_URL} into {LOCAL_REPO_PATH}...")
-        subprocess.run(["git", "clone", "-b", BRANCH, REPO_URL, str(LOCAL_REPO_PATH)], check=True)
+    repo_path = tmpdir
+    deployer_path = repo_path / REPO_SUBDIR
+    src_file = deployer_path / source_file
+    tgt_file = deployer_path / target_file
 
-def find_error_line(text):
-    keywords = ['FAILED', 'ERROR', 'CRITICAL']
-    pattern = re.compile(r'(' + '|'.join(keywords) + r')', re.IGNORECASE)
-    for line in text.splitlines():
-        if pattern.search(line):
-            return line.strip()
-    return None
+    if not src_file.exists():
+        click.echo(f"❌ Source file not found: {src_file}")
+        shutil.rmtree(tmpdir)
+        return
+    if not tgt_file.exists():
+        click.echo(f"❌ Target file not found: {tgt_file}")
+        shutil.rmtree(tmpdir)
+        return
 
-# =========================
-# 💻 CLI Entry
-# =========================
-@click.command()
-@click.argument("services", nargs=-1, required=True)
-def status(services):
-    """Check status of multiple services across all environments"""
-    git_clone_or_update()
-    config_folder = LOCAL_REPO_PATH / CONFIG_SUBPATH
+    # Load source & target JSON
+    with src_file.open() as f:
+        src_data = json.load(f)
+    with tgt_file.open() as f:
+        tgt_data = json.load(f)
 
-    # Initialize outputs per environment
-    report = {env: {} for env in ENVIRONMENTS}
+    src_services = src_data.get("services", {})
+    tgt_services = tgt_data.setdefault("services", {})
 
-    # Determine suffixes per service
-    service_suffix_map = {}
+    updates = []
     for svc in services:
-        if svc.lower().startswith("bremployeeportal"):
-            service_suffix_map[svc] = BREMPL_SUFFIXES
-        else:
-            service_suffix_map[svc] = DEFAULT_SUFFIXES
-
-    # =========================
-    # 🔍 Build URLs
-    # =========================
-    for svc in services:
-        matching_files = [f for f in os.listdir(config_folder)
-                          if f.lower().startswith(svc.lower()) and f.endswith(".conf")]
-
-        if not matching_files:
-            print(f"⚠️ No config file found for service {svc}")
+        # Case-insensitive lookup
+        match = next((k for k in src_services if k.lower() == svc.lower()), None)
+        if not match:
+            click.echo(f"⚠️ Service '{svc}' not found in source file.")
             continue
 
-        for filename in matching_files:
-            file_path = config_folder / filename
-            if "extern" in filename.lower():
-                is_external = True
-            elif "intern" in filename.lower():
-                is_external = False
-            else:
-                print(f"⚠️ File {filename} doesn't specify internal/external, skipping.")
-                continue
+        new_version = src_services[match]
+        old_version = tgt_services.get(match)
+        if old_version == new_version:
+            click.echo(f"ℹ️ {match} already at version {new_version}, no change.")
+            continue
 
-            with open(file_path, "r") as f:
-                content = f.read()
+        tgt_services[match] = new_version
+        updates.append((match, old_version, new_version))
 
-            matches = LOCATION_REGEX.findall(content)
-            api_locations = [loc.strip() for loc in matches if loc.strip().startswith("/")]
+    if not updates:
+        click.echo("✅ No updates applied.")
+        shutil.rmtree(tmpdir)
+        return
 
-            if api_locations:
-                for env in ENVIRONMENTS:
-                    if svc not in report[env]:
-                        report[env][svc] = []
-                    for base_location in api_locations:
-                        for suffix in service_suffix_map[svc]:
-                            # Build URL prefix
-                            if env == "prod":
-                                prefix = "https://onvio.com.br" if is_external else "https://int.onvio.com.br"
-                            else:
-                                prefix = f"https://{env}01.onvio.com.br"
-                            url = f"{prefix}{base_location}{suffix}"
-                            report[env][svc].append(url)
-            else:
-                print(f"⚠️ No /api location found in {filename}")
+    # Save updated target JSON
+    with tgt_file.open("w") as f:
+        json.dump(tgt_data, f, indent=2)
 
-    # =========================
-    # 🌐 Perform HTTP Requests & Print Detailed Status
-    # =========================
-    for env in ENVIRONMENTS:
-        print(f"\n============================")
-        print(f"🌐 Environment: {env.upper()}")
-        print("============================")
-        env_services = report.get(env, {})
+    click.echo(f"💾 Target file updated: {tgt_file}")
+    for svc, old, new in updates:
+        click.echo(f"⚡ {svc}: {old or 'not present'} → {new}")
 
-        # Determine column width automatically
-        svc_width = max([len(svc) for svc in env_services.keys()] + [7])
-        url_width = 70
-        print(f"{'SERVICE':<{svc_width}} | {'URL':<{url_width}} | STATUS")
-        print("-" * (svc_width + url_width + 10))
+    # Commit & push
+    commit_message = f"Promote services from {source_file} → {target_file}:\n" + "\n".join(
+        [f"- {svc}: {old or 'none'} → {new}" for svc, old, new in updates]
+    )
+    git_commit_push(repo_path, [str(tgt_file)], commit_message)
 
-        for svc, urls in env_services.items():
-            ok_count = 0
-            fail_count = 0
-            for url in urls:
-                try:
-                    response = requests.get(url, timeout=TIMEOUT)
-                    status_code = response.status_code
-                    text = response.text.strip()
-                    if status_code == 200:
-                        err_line = find_error_line(text)
-                        if err_line:
-                            status = "⚠️ FAILED"
-                            fail_count += 1
-                        else:
-                            status = "✅ OK"
-                            ok_count += 1
-                    elif status_code == 404:
-                        status = "❌ 404 NOT FOUND"
-                        fail_count += 1
-                    elif 500 <= status_code <= 599:
-                        status = f"❌ HTTP {status_code}"
-                        fail_count += 1
-                    else:
-                        status = f"❌ HTTP {status_code}"
-                        fail_count += 1
-                except requests.exceptions.RequestException:
-                    status = f"❌ CONNECTION ERROR"
-                    fail_count += 1
-                print(f"{svc:<{svc_width}} | {url:<{url_width}} | {status}")
+    # Cleanup repo
+    click.echo("🧹 Cleaning up local clone...")
+    shutil.rmtree(tmpdir)
+    click.echo("✅ Done.")
 
-            print(f"\nSummary for {svc}: ✅ OK: {ok_count} | ❌ Failed: {fail_count}")
-            print("-" * (svc_width + url_width + 10))
-
-    # =========================
-    # 📊 SUMMARY BY ENVIRONMENT
-    # =========================
-    print("\n============================")
-    print("📊 SUMMARY BY ENVIRONMENT")
-    print("============================")
-    summary_header = f"{'ENVIRONMENT':<12} | STATUS"
-    print(summary_header)
-    print("-" * (len(summary_header)+5))
-
-    for env in ENVIRONMENTS:
-        env_services = report.get(env, {})
-        all_ok = True
-        for svc, urls in env_services.items():
-            for url in urls:
-                try:
-                    response = requests.get(url, timeout=TIMEOUT)
-                    status_code = response.status_code
-                    text = response.text.strip()
-                    if status_code != 200 or find_error_line(text):
-                        all_ok = False
-                        break
-                except requests.exceptions.RequestException:
-                    all_ok = False
-                    break
-            if not all_ok:
-                break
-        status_symbol = "✅" if all_ok else "❌"
-        print(f"{env.upper():<12} | {status_symbol}")
-
-    # =========================
-    # 🧹 Cleanup
-    # =========================
-    if LOCAL_REPO_PATH.exists():
-        shutil.rmtree(LOCAL_REPO_PATH)
-        print(f"\n🧹 Cleaned up local repo {LOCAL_REPO_PATH}")
-
-
-if __name__ == "__main__":
-    status()
+def run_aws_cli(command: list) -> dict:
+    try:
+        result = subprocess.run(
+            ["aws"] + command + ["--output", "json"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(result.stdout)
+    except subprocess.CalledProcessError as e:
+        click.echo(f"❌ AWS CLI command failed: {e.stderr}")
+        raise
