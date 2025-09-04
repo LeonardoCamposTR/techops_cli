@@ -51,12 +51,6 @@ def find_error_line(text):
             return line.strip()
     return None
 
-def cleanup_repo():
-    """Remove cloned repository"""
-    if LOCAL_REPO_PATH.exists():
-        print(f"🧹 Removing local repo at {LOCAL_REPO_PATH}...")
-        shutil.rmtree(LOCAL_REPO_PATH)
-
 # =========================
 # 💻 CLI Entry
 # =========================
@@ -64,167 +58,101 @@ def cleanup_repo():
 @click.argument("services", nargs=-1, required=True)
 def status(services):
     """Check status of multiple services across all environments"""
-    try:
-        git_clone_or_update()
+    git_clone_or_update()
+    config_folder = LOCAL_REPO_PATH / CONFIG_SUBPATH
 
-        config_folder = LOCAL_REPO_PATH / CONFIG_SUBPATH
+    # Initialize outputs per environment
+    report = {env: {} for env in ENVIRONMENTS}
 
-        # Store results structured by service -> environment -> url -> status
-        results = {}
-        services_with_5xx = set()
+    # Determine suffixes per service
+    service_suffix_map = {}
+    for svc in services:
+        if svc.lower().startswith("bremployeeportal"):
+            service_suffix_map[svc] = BREMPL_SUFFIXES
+        else:
+            service_suffix_map[svc] = DEFAULT_SUFFIXES
 
-        # Determine suffixes per service
-        service_suffix_map = {}
-        for svc in services:
-            if svc.lower().startswith("bremployeeportal"):
-                service_suffix_map[svc] = BREMPL_SUFFIXES
+    # Iterate services
+    for svc in services:
+        matching_files = [f for f in os.listdir(config_folder)
+                          if f.lower().startswith(svc.lower()) and f.endswith(".conf")]
+
+        if not matching_files:
+            print(f"⚠️ No config file found for service {svc}")
+            continue
+
+        for filename in matching_files:
+            file_path = config_folder / filename
+            if "extern" in filename.lower():
+                is_external = True
+            elif "intern" in filename.lower():
+                is_external = False
             else:
-                service_suffix_map[svc] = DEFAULT_SUFFIXES
-
-        # Iterate services
-        for svc in services:
-            matching_files = [f for f in os.listdir(config_folder)
-                              if f.lower().startswith(svc.lower()) and f.endswith(".conf")]
-
-            if not matching_files:
-                print(f"⚠️ No config file found for service {svc}")
+                print(f"⚠️ File {filename} doesn't specify internal/external, skipping.")
                 continue
 
-            results[svc] = {}
+            with open(file_path, "r") as f:
+                content = f.read()
 
-            for filename in matching_files:
-                file_path = config_folder / filename
+            matches = LOCATION_REGEX.findall(content)
+            api_locations = [loc.strip() for loc in matches if loc.strip().startswith("/")]
 
-                # Determine internal/external type
-                if "extern" in filename.lower():
-                    is_external = True
-                elif "intern" in filename.lower():
-                    is_external = False
-                else:
-                    print(f"⚠️ File {filename} doesn't specify internal/external, skipping.")
-                    continue
-
-                with open(file_path, "r") as f:
-                    content = f.read()
-
-                matches = LOCATION_REGEX.findall(content)
-                api_locations = [loc.strip() for loc in matches if loc.strip().startswith("/")]
-
-                if not api_locations:
-                    print(f"⚠️ No /api location found in {filename}")
-                    continue
-
-                # Prepare environment URLs
+            if api_locations:
                 for env in ENVIRONMENTS:
-                    if env not in results[svc]:
-                        results[svc][env] = {}
-
+                    if env not in report:
+                        report[env] = {}
+                    report_env = report[env]
+                    if svc not in report_env:
+                        report_env[svc] = []
                     for base_location in api_locations:
                         for suffix in service_suffix_map[svc]:
+                            # Build URL prefix
                             if env == "prod":
                                 prefix = "https://onvio.com.br" if is_external else "https://int.onvio.com.br"
                             else:
                                 prefix = f"https://{env}01.onvio.com.br"
                             url = f"{prefix}{base_location}{suffix}"
-                            results[svc][env][url] = {"status": None, "error_line": None}
+                            report_env[svc].append(url)
+            else:
+                print(f"⚠️ No /api location found in {filename}")
 
-        # =========================
-        # 🌐 Perform HTTP Requests and organize by environment
-        # =========================
-        results = {}  # Structure: { service: { env: { url: {status, error_line} } } }
-
-        for svc, urls in output.items():
-            results[svc] = {}
-            suffixes = service_suffix_map[svc]
+    # =========================
+    # 🌐 Perform HTTP Requests & Print
+    # =========================
+    for env in ENVIRONMENTS:
+        print(f"\n============================")
+        print(f"🌐 Environment: {env.upper()}")
+        print("============================")
+        env_services = report.get(env, {})
+        for svc, urls in env_services.items():
+            print(f"\n{svc}:")
             for url in urls:
-                env = next((e for e in ENVIRONMENTS if e in url.lower()), "prod")  # crude env detection
-                if env not in results[svc]:
-                    results[svc][env] = {}
-
-                matched_suffix = next((s for s in suffixes if url.endswith(s)), None)
-                info = {"status": None, "error_line": None}
-
                 try:
                     response = requests.get(url, timeout=TIMEOUT)
-                    info["status"] = response.status_code
-                    if response.status_code == 200:
-                        err_line = find_error_line(response.text)
-                        info["error_line"] = err_line
-                except requests.exceptions.RequestException as e:
-                    info["status"] = f"CONNECTION ERROR ({e})"
-
-                results[svc][env][url] = info
-
-        # =========================
-        # 📝 Pretty Report: Detailed + Environment Summary
-        # =========================
-        service_ok_count = 0
-        total_services = len(results)
-
-        print("\n==========================")
-        print("🔍 DETAILED URL REPORT")
-        print("==========================\n")
-
-        for svc, env_data in results.items():
-            print(f"{svc}:")
-            service_has_error = False
-            for env, urls_info in env_data.items():
-                print(f"  [{env.upper()}]")
-                for url, info in urls_info.items():
-                    status = info["status"]
-                    err_line = info.get("error_line")
-                    if status == 200 and not err_line:
-                        print(f"    {url} - ✅ OK")
-                    elif isinstance(status, int) and 500 <= status <= 599:
-                        print(f"    {url} - ❌ HTTP {status} (Server Error)")
-                        service_has_error = True
-                    elif status == 404:
-                        print(f"    {url} - ❌ HTTP 404 NOT FOUND")
-                        service_has_error = True
-                    elif err_line:
-                        print(f"    {url} - ⚠️ FAILED in response")
-                        print(f"      Line: {err_line}")
-                        service_has_error = True
+                    status_code = response.status_code
+                    text = response.text.strip()
+                    if status_code == 200:
+                        err_line = find_error_line(text)
+                        if err_line:
+                            print(f"  {url} - ⚠️ FAILED in response")
+                            print(f"    Line: {err_line}")
+                        else:
+                            print(f"  {url} - ✅ OK")
+                    elif status_code == 404:
+                        print(f"  {url} - ❌ HTTP 404 NOT FOUND")
+                    elif 500 <= status_code <= 599:
+                        print(f"  {url} - ❌ HTTP {status_code} (Server Error)")
                     else:
-                        print(f"    {url} - ❌ {status}")
-                        service_has_error = True
-                print()
-            if not service_has_error:
-                service_ok_count += 1
+                        print(f"  {url} - ❌ HTTP {status_code}")
+                except requests.exceptions.RequestException as e:
+                    print(f"  {url} - ❌ CONNECTION ERROR ({e})")
 
-        # =========================
-        # 🌐 Summary by environment
-        # =========================
-        print("\n==========================")
-        print("📊 SUMMARY BY ENVIRONMENT")
-        print("==========================\n")
-
-        for env in ENVIRONMENTS:
-            total_ok = total_5xx = total_404 = total_failed_content = 0
-            for svc, env_data in results.items():
-                if env not in env_data:
-                    continue
-                for url, info in env_data[env].items():
-                    status = info["status"]
-                    err_line = info.get("error_line")
-                    if status == 200 and not err_line:
-                        total_ok += 1
-                    elif isinstance(status, int) and 500 <= status <= 599:
-                        total_5xx += 1
-                    elif status == 404:
-                        total_404 += 1
-                    elif err_line:
-                        total_failed_content += 1
-            print(f"Environment: {env.upper()}")
-            print(f"  ✅ OK URLs: {total_ok}")
-            print(f"  ❌ 5xx Errors: {total_5xx}")
-            print(f"  ❌ 404 Errors: {total_404}")
-            print(f"  ⚠️ Failed Content: {total_failed_content}")
-            print("---------------------------------------------")
-            
-    finally:
-        # Always cleanup the repo
-        cleanup_repo()
+    # =========================
+    # 🧹 Cleanup
+    # =========================
+    if LOCAL_REPO_PATH.exists():
+        shutil.rmtree(LOCAL_REPO_PATH)
+        print(f"\n🧹 Cleaned up local repo {LOCAL_REPO_PATH}")
 
 if __name__ == "__main__":
     status()
