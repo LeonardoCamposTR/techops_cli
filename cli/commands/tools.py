@@ -10,6 +10,13 @@ def aws():
 
 @aws.command("login")
 def login():
+    """
+    Login with multilogin suported ( preprod and prod together)
+
+    Usage:
+        connect {env} {service}
+    """
+
     cmd = ["cloud-tool", "multilogin", "-i", "~/.venv/profiles.csv"]
     subprocess.run(cmd, check=True)
 
@@ -30,7 +37,7 @@ def connect_instance_ssm(env, service, region):
         "lab": {"profile": "preprod", "tag_key": "env", "tag_value": "lab"},
         "qa": {"profile": "preprod", "tag_key": "env", "tag_value": "qa"},
         "sat": {"profile": "preprod", "tag_key": "env", "tag_value": "sat"},
-        "prod": {"profile": "prod", "tag_key": "name", "tag_value": "prod"},
+        "prod": {"profile": "prod", "tag_key": "env", "tag_value": "prod"},
     }
 
     env_lower = env.lower()
@@ -47,7 +54,7 @@ def connect_instance_ssm(env, service, region):
     if region:
         base_args += ["--region", region]
 
-    click.echo(f"⚡ Searching instances for env={env}, service={service} using profile={profile}...")
+    click.echo(f"⚡ Searching instances {service} in environment {env}, ...")
 
     # Get all ASGs
     asg_data = run_aws_cli(["autoscaling", "describe-auto-scaling-groups"] + base_args)
@@ -92,3 +99,4 @@ def connect_instance_ssm(env, service, region):
         ["aws", "ssm", "start-session", "--target", selected_instance] + base_args,
         check=True
     )
+
