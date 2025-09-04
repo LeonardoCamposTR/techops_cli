@@ -1,6 +1,6 @@
 import click
-import subprocess, json
-from InquirerPy import inquirer
+import subprocess
+from InquirerPy import inquirer, exceptions
 from cli.utils import run_aws_cli
 
 @click.command("terminate-asg-instances")
@@ -43,11 +43,16 @@ def terminate_asg_instances(env, profile, region):
 
     # Multi-select ASG using checkbox
     choices = [asg["AutoScalingGroupName"] for asg in matching_asgs]
-    selected_asgs = inquirer.checkbox(
-        message="Select ASG(s) to terminate (press SPACE to select, ENTER to confirm, q to exit):",
-        choices=choices,
-        instruction="Use SPACE to select, ENTER to confirm, q to quit"
-    ).execute()
+
+    try:
+        selected_asgs = inquirer.checkbox(
+            message="Select ASG(s) to terminate (press SPACE to select, ENTER to confirm, q to exit):",
+            choices=choices,
+            instruction="Use SPACE to select, ENTER to confirm, q to quit"
+        ).execute()
+    except exceptions.KeyboardInterrupt:
+        click.echo("\n❌ Exiting.")
+        return
 
     if not selected_asgs:
         click.echo("❌ No ASGs selected. Exiting.")
@@ -78,4 +83,5 @@ def terminate_asg_instances(env, profile, region):
             click.echo("🚀 Termination initiated.")
         else:
             click.echo(f"❌ Termination cancelled for ASG {asg_name}.")
+
     click.echo(f"Terminate ASG instances for {env} (profile={profile}, region={region})")
