@@ -3,6 +3,10 @@ import subprocess
 from InquirerPy import inquirer
 from cli.utils import run_aws_cli
 
+def quit_prompt(prompt):
+    """Exit the prompt immediately when 'q' is pressed."""
+    prompt.exit(result=None)
+
 @click.command("terminate-asg-instances")
 @click.argument("env")
 @click.option("--profile", default="preprod", help="AWS profile")
@@ -49,12 +53,10 @@ def terminate_asg_instances(env, profile, region):
         message="Select ASG(s) to terminate (press SPACE to select, ENTER to confirm, q to exit):",
         choices=choices,
         instruction="Use SPACE to select, ENTER to confirm, q to quit",
-        keybindings={
-            "q": lambda prompt: prompt.exit(result=None)  # q exits immediately
-        }
+        keybindings={"q": quit_prompt}
     ).execute()
 
-    # If user pressed q or nothing selected, exit
+    # Exit if user pressed q or selected nothing
     if not selected_asgs:
         click.echo("❌ Exiting.")
         return
