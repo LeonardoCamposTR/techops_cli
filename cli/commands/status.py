@@ -1,158 +1,164 @@
-#!/usr/bin/env python3
-import os
-import re
-import subprocess
-import sys
 import shutil
-from pathlib import Path
+import subprocess
 import requests
-import click
+from pathlib import Path
 
 # =========================
-# 🔧 Configurations
+# CONFIGURATION
 # =========================
-REPO_URL = "git@github.com:tr/a202606_mastersafdevops-tools-builder.git"
-BRANCH = "feature/0.13.0-onviobr-ami-baking"  # Hardcoded branch
+REPO_URL = "git@github.com:yourorg/yourrepo.git"
+BRANCH = "develop"  # Hardcoded branch
 LOCAL_REPO_PATH = Path("/tmp/techops_status_repo")
-CONFIG_SUBPATH = "onviobr/resources/nginx/etc/nginx/locations"
-
-# ENVIRONMENTS
-ENVIRONMENTS = ["lab", "qa", "sat", "prod"]
-
-# Default suffixes
-DEFAULT_SUFFIXES = ["v1/statuscheck", "v1/resourcecheck", "v1/resourceinspect"]
-# Special suffixes for bremployeeportal
-BREMPL_SUFFIXES = ["healthcheck"]
-
-# Regex to extract nginx locations
-LOCATION_REGEX = re.compile(r'location\s+([^\s{]+)')
-
+CONFIG_SUBPATH = "resources/nginx/etc/nginx/locations"
 TIMEOUT = 5
 
+ENVIRONMENTS = ["lab", "qa", "sat", "prod"]
+
+SERVICE_PREFIXES = {
+    "lab": "lab01",
+    "qa": "qa01",
+    "sat": "sat01",
+}
+
+PROD_URLS = {
+    "external": "https://onvio.com.br",
+    "internal": "https://int.onvio.com.br"
+}
+
+SUFFIXES = ["healthcheck"]
+
 # =========================
-# 📝 Functions
+# HELPER FUNCTIONS
 # =========================
-def git_clone_or_update():
-    """Clone repo if missing, else pull latest branch"""
+def clone_repo():
     if LOCAL_REPO_PATH.exists():
-        print(f"📦 Repo exists, pulling latest changes in {BRANCH} branch...")
-        subprocess.run(["git", "-C", str(LOCAL_REPO_PATH), "fetch"], check=True)
-        subprocess.run(["git", "-C", str(LOCAL_REPO_PATH), "checkout", BRANCH], check=True)
-        subprocess.run(["git", "-C", str(LOCAL_REPO_PATH), "pull", "origin", BRANCH], check=True)
-    else:
-        print(f"📦 Cloning repo {REPO_URL} into {LOCAL_REPO_PATH}...")
-        subprocess.run(["git", "clone", "-b", BRANCH, REPO_URL, str(LOCAL_REPO_PATH)], check=True)
+        shutil.rmtree(LOCAL_REPO_PATH)
+    subprocess.run(["git", "clone", REPO_URL, str(LOCAL_REPO_PATH)], check=True)
+    subprocess.run(["git", "checkout", BRANCH], cwd=str(LOCAL_REPO_PATH), check=True)
+    subprocess.run(["git", "pull"], cwd=str(LOCAL_REPO_PATH), check=True)
 
-def find_error_line(text):
-    keywords = ['FAILED', 'ERROR', 'CRITICAL']
-    pattern = re.compile(r'(' + '|'.join(keywords) + r')', re.IGNORECASE)
-    for line in text.splitlines():
-        if pattern.search(line):
-            return line.strip()
-    return None
+def find_nginx_files(service_name):
+    config_path = LOCAL_REPO_PATH / CONFIG_SUBPATH
+    matching_files = []
+    for f in config_path.glob(f"{service_name}*"):
+        # Skip suffixes if service starts with bremployeeportal
+        if service_name.startswith("bremployeeportal") and any(f.name.endswith(suffix) for suffix in SUFFIXES):
+            continue
+        if f.is_file():
+            matching_files.append(f)
+    return matching_files
+
+def parse_locations(file_path):
+    locations = []
+    with open(file_path) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("location"):
+                # Simple parsing of nginx location block
+                parts = line.split()
+                if len(parts) >= 2:
+                    url = parts[1].rstrip(";")
+                    locations.append(url)
+    return locations
+
+def build_urls(service_name, location):
+    urls = []
+    for env in ENVIRONMENTS:
+        if env in SERVICE_PREFIXES:
+            prefix = SERVICE_PREFIXES[env]
+            urls.append(f"https://{prefix}.onvio.com.br{location}")
+        elif env == "prod":
+            urls.append(f"{PROD_URLS['external']}{location}")
+            urls.append(f"{PROD_URLS['internal']}{location}")
+    return urls
+
+def find_error_line(html_text):
+    # Customize if needed; basic example: detect "<error>"
+    return "<error>" in html_text.lower()
 
 # =========================
-# 💻 CLI Entry
+# MAIN FUNCTION
 # =========================
-@click.command()
-@click.argument("services", nargs=-1, required=True)
-def status(services):
-    """Check status of multiple services across all environments"""
-    git_clone_or_update()
-    config_folder = LOCAL_REPO_PATH / CONFIG_SUBPATH
-
-    # Initialize outputs per environment
+def status_services(service_names):
+    clone_repo()
     report = {env: {} for env in ENVIRONMENTS}
 
-    # Determine suffixes per service
-    service_suffix_map = {}
-    for svc in services:
-        if svc.lower().startswith("bremployeeportal"):
-            service_suffix_map[svc] = BREMPL_SUFFIXES
-        else:
-            service_suffix_map[svc] = DEFAULT_SUFFIXES
-
-    # Iterate services
-    for svc in services:
-        matching_files = [f for f in os.listdir(config_folder)
-                          if f.lower().startswith(svc.lower()) and f.endswith(".conf")]
-
-        if not matching_files:
-            print(f"⚠️ No config file found for service {svc}")
-            continue
-
-        for filename in matching_files:
-            file_path = config_folder / filename
-            if "extern" in filename.lower():
-                is_external = True
-            elif "intern" in filename.lower():
-                is_external = False
-            else:
-                print(f"⚠️ File {filename} doesn't specify internal/external, skipping.")
-                continue
-
-            with open(file_path, "r") as f:
-                content = f.read()
-
-            matches = LOCATION_REGEX.findall(content)
-            api_locations = [loc.strip() for loc in matches if loc.strip().startswith("/")]
-
-            if api_locations:
-                for env in ENVIRONMENTS:
-                    if env not in report:
-                        report[env] = {}
-                    report_env = report[env]
-                    if svc not in report_env:
-                        report_env[svc] = []
-                    for base_location in api_locations:
-                        for suffix in service_suffix_map[svc]:
-                            # Build URL prefix
-                            if env == "prod":
-                                prefix = "https://onvio.com.br" if is_external else "https://int.onvio.com.br"
-                            else:
-                                prefix = f"https://{env}01.onvio.com.br"
-                            url = f"{prefix}{base_location}{suffix}"
-                            report_env[svc].append(url)
-            else:
-                print(f"⚠️ No /api location found in {filename}")
+    for service in service_names:
+        files = find_nginx_files(service)
+        for f in files:
+            locations = parse_locations(f)
+            urls = []
+            for loc in locations:
+                urls.extend(build_urls(service, loc))
+            # Store urls by environment
+            for env in ENVIRONMENTS:
+                env_urls = [u for u in urls if f"{env}" in u or env == "prod"]
+                if service not in report[env]:
+                    report[env][service] = []
+                report[env][service].extend(env_urls)
 
     # =========================
-    # 🌐 Perform HTTP Requests & Print
+    # REPORTING
     # =========================
     for env in ENVIRONMENTS:
         print(f"\n============================")
         print(f"🌐 Environment: {env.upper()}")
         print("============================")
+        
         env_services = report.get(env, {})
+        env_ok_services = 0
+        env_failed_services = 0
+        
         for svc, urls in env_services.items():
-            print(f"\n{svc}:")
+            ok_count = 0
+            fail_count = 0
+            print(f"\n📌 Service: {svc}")
+            print(f"{'URL':70} | STATUS")
+            print("-" * 85)
+            
             for url in urls:
                 try:
                     response = requests.get(url, timeout=TIMEOUT)
                     status_code = response.status_code
                     text = response.text.strip()
                     if status_code == 200:
-                        err_line = find_error_line(text)
-                        if err_line:
-                            print(f"  {url} - ⚠️ FAILED in response")
-                            print(f"    Line: {err_line}")
+                        if find_error_line(text):
+                            status = "⚠️ FAILED"
+                            fail_count += 1
                         else:
-                            print(f"  {url} - ✅ OK")
+                            status = "✅ OK"
+                            ok_count += 1
                     elif status_code == 404:
-                        print(f"  {url} - ❌ HTTP 404 NOT FOUND")
+                        status = "❌ 404 NOT FOUND"
+                        fail_count += 1
                     elif 500 <= status_code <= 599:
-                        print(f"  {url} - ❌ HTTP {status_code} (Server Error)")
+                        status = f"❌ HTTP {status_code}"
+                        fail_count += 1
                     else:
-                        print(f"  {url} - ❌ HTTP {status_code}")
-                except requests.exceptions.RequestException as e:
-                    print(f"  {url} - ❌ CONNECTION ERROR ({e})")
+                        status = f"❌ HTTP {status_code}"
+                        fail_count += 1
+                except requests.exceptions.RequestException:
+                    status = f"❌ CONNECTION ERROR"
+                    fail_count += 1
+                print(f"{url:70} | {status}")
+            
+            print(f"\nSummary for {svc}: ✅ OK: {ok_count} | ❌ Failed: {fail_count}")
+            if fail_count == 0:
+                env_ok_services += 1
+            else:
+                env_failed_services += 1
 
-    # =========================
-    # 🧹 Cleanup
-    # =========================
+        # Environment summary
+        total_services = env_ok_services + env_failed_services
+        success_percent = (env_ok_services / total_services * 100) if total_services else 0
+        print("\n-----------------------------")
+        print(f"🌟 Environment Summary ({env.upper()}):")
+        print(f"Total services: {total_services}")
+        print(f"✅ OK: {env_ok_services}")
+        print(f"❌ Failed: {env_failed_services}")
+        print(f"Success rate: {success_percent:.2f}%")
+        print("-----------------------------\n")
+
+    # Cleanup
     if LOCAL_REPO_PATH.exists():
         shutil.rmtree(LOCAL_REPO_PATH)
-        print(f"\n🧹 Cleaned up local repo {LOCAL_REPO_PATH}")
-
-if __name__ == "__main__":
-    status()
