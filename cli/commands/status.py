@@ -2,6 +2,7 @@
 import os
 import re
 import subprocess
+import sys
 import shutil
 from pathlib import Path
 import requests
@@ -11,7 +12,7 @@ import click
 # 🔧 Configurations
 # =========================
 REPO_URL = "git@github.com:tr/a202606_mastersafdevops-tools-builder.git"
-BRANCH = "feature/0.13.0-onviobr-ami-baking"  # Hardcoded branch
+BRANCH = "feature/0.13.0-onviobr-ami-baking"
 LOCAL_REPO_PATH = Path("/tmp/techops_status_repo")
 CONFIG_SUBPATH = "onviobr/resources/nginx/etc/nginx/locations"
 
@@ -43,69 +44,13 @@ def git_clone_or_update():
         subprocess.run(["git", "clone", "-b", BRANCH, REPO_URL, str(LOCAL_REPO_PATH)], check=True)
 
 def find_error_line(text):
+    """Search for FAILED/ERROR/CRITICAL in response body"""
     keywords = ['FAILED', 'ERROR', 'CRITICAL']
     pattern = re.compile(r'(' + '|'.join(keywords) + r')', re.IGNORECASE)
     for line in text.splitlines():
         if pattern.search(line):
             return line.strip()
     return None
-
-def build_service_urls(service, base_locations, suffixes, is_external):
-    urls = []
-    for env in ENVIRONMENTS:
-        prefix = ""
-        if env == "prod":
-            prefix_external = "https://onvio.com.br"
-            prefix_internal = "https://int.onvio.com.br"
-            prefix = prefix_external if is_external else prefix_internal
-        else:
-            prefix = f"https://{env}01.onvio.com.br"
-        for loc in base_locations:
-            for suffix in suffixes:
-                urls.append((env, f"{prefix}{loc}{suffix}"))
-    return urls
-
-def print_env_report(report):
-    """Print a clean professional report"""
-    for env in ENVIRONMENTS:
-        print(f"\n{'='*60}")
-        print(f"🌐 ENVIRONMENT: {env.upper()}")
-        print(f"{'='*60}")
-        env_services = report.get(env, {})
-        for svc, urls in env_services.items():
-            print(f"\n📌 Service: {svc}")
-            print(f"{'URL':60} | STATUS")
-            print("-"*80)
-            ok_count = 0
-            fail_count = 0
-            for url in urls:
-                try:
-                    response = requests.get(url, timeout=TIMEOUT)
-                    status_code = response.status_code
-                    text = response.text.strip()
-                    if status_code == 200:
-                        err_line = find_error_line(text)
-                        if err_line:
-                            status = "⚠️ FAILED"
-                            fail_count += 1
-                        else:
-                            status = "✅ OK"
-                            ok_count += 1
-                    elif status_code == 404:
-                        status = "❌ 404 NOT FOUND"
-                        fail_count += 1
-                    elif 500 <= status_code <= 599:
-                        status = f"❌ HTTP {status_code}"
-                        fail_count += 1
-                    else:
-                        status = f"❌ HTTP {status_code}"
-                        fail_count += 1
-                except requests.exceptions.RequestException:
-                    status = "❌ CONNECTION ERROR"
-                    fail_count += 1
-                print(f"{url:60} | {status}")
-            print(f"\nSummary for {svc}: ✅ OK: {ok_count} | ❌ Failed: {fail_count}")
-        print(f"{'-'*60}")
 
 # =========================
 # 💻 CLI Entry
@@ -117,6 +62,7 @@ def status(services):
     git_clone_or_update()
     config_folder = LOCAL_REPO_PATH / CONFIG_SUBPATH
 
+    # Initialize outputs per environment
     report = {env: {} for env in ENVIRONMENTS}
 
     # Determine suffixes per service
@@ -138,28 +84,85 @@ def status(services):
 
         for filename in matching_files:
             file_path = config_folder / filename
-            is_external = "extern" in filename.lower()
+            if "extern" in filename.lower():
+                is_external = True
+            elif "intern" in filename.lower():
+                is_external = False
+            else:
+                print(f"⚠️ File {filename} doesn't specify internal/external, skipping.")
+                continue
 
             with open(file_path, "r") as f:
                 content = f.read()
 
-            base_locations = [loc.strip() for loc in LOCATION_REGEX.findall(content) if loc.strip().startswith("/")]
-            if not base_locations:
+            matches = LOCATION_REGEX.findall(content)
+            api_locations = [loc.strip() for loc in matches if loc.strip().startswith("/")]
+
+            if api_locations:
+                for env in ENVIRONMENTS:
+                    if env not in report:
+                        report[env] = {}
+                    report_env = report[env]
+                    if svc not in report_env:
+                        report_env[svc] = []
+                    for base_location in api_locations:
+                        for suffix in service_suffix_map[svc]:
+                            # Build URL prefix
+                            if env == "prod":
+                                prefix = "https://onvio.com.br" if is_external else "https://int.onvio.com.br"
+                            else:
+                                prefix = f"https://{env}01.onvio.com.br"
+                            url = f"{prefix}{base_location}{suffix}"
+                            report_env[svc].append(url)
+            else:
                 print(f"⚠️ No /api location found in {filename}")
-                continue
 
-            urls = build_service_urls(svc, base_locations, service_suffix_map[svc], is_external)
+    # =========================
+    # 🌐 Perform HTTP Requests & Print - Cleaned Professional Version
+    # =========================
+    for env in ENVIRONMENTS:
+        print(f"\n============================")
+        print(f"🌐 Environment: {env.upper()}")
+        print("============================")
 
-            # Fill report
-            for env, url in urls:
-                if svc not in report[env]:
-                    report[env][svc] = []
-                report[env][svc].append(url)
+        env_services = report.get(env, {})
+        if not env_services:
+            print("⚠️ No services found for this environment")
+            continue
 
-    # Print professional report
-    print_env_report(report)
+        # Table header
+        print(f"{'SERVICE':25} | {'OK':>5} | {'FAILED':>6}")
+        print("-" * 45)
 
-    # Cleanup
+        for svc, urls in env_services.items():
+            ok_count = 0
+            fail_count = 0
+            failed_urls = []
+
+            for url in urls:
+                try:
+                    response = requests.get(url, timeout=TIMEOUT)
+                    status_code = response.status_code
+                    text = response.text.strip()
+                    if status_code == 200 and not find_error_line(text):
+                        ok_count += 1
+                    else:
+                        fail_count += 1
+                        failed_urls.append(f"{url} ({status_code})")
+                except requests.exceptions.RequestException:
+                    fail_count += 1
+                    failed_urls.append(f"{url} (CONNECTION ERROR)")
+
+            # Print service summary
+            print(f"{svc:25} | {ok_count:>5} | {fail_count:>6}")
+
+            # Optional: print failed URLs only
+            for fail_url in failed_urls:
+                print(f"   ❌ {fail_url}")
+
+    # =========================
+    # 🧹 Cleanup
+    # =========================
     if LOCAL_REPO_PATH.exists():
         shutil.rmtree(LOCAL_REPO_PATH)
         print(f"\n🧹 Cleaned up local repo {LOCAL_REPO_PATH}")
