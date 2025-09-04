@@ -4,9 +4,10 @@ import re
 import requests
 from pathlib import Path
 import click
-from git import Repo
+from git import Repo, GitCommandError
 
 REPO_URL = "git@github.com:yourorg/yourrepo.git"
+BRANCH = "develop"  # Hardcoded branch to use
 LOCAL_REPO_PATH = Path("/tmp/techops_status_repo")
 CONFIG_SUBPATH = "resources/nginx/etc/nginx/locations"
 SUFFIXES = [
@@ -20,12 +21,19 @@ TIMEOUT = 5
 location_regex = re.compile(r'location\s+([^\s{]+)')
 
 def clone_repo():
+    """Clone the repo if needed, pull changes, and switch to the hardcoded branch."""
     if LOCAL_REPO_PATH.exists():
         repo = Repo(LOCAL_REPO_PATH)
         origin = repo.remotes.origin
+        try:
+            repo.git.checkout(BRANCH)
+        except GitCommandError:
+            origin.fetch(BRANCH)
+            repo.git.checkout(BRANCH)
         origin.pull()
     else:
-        Repo.clone_from(REPO_URL, LOCAL_REPO_PATH)
+        repo = Repo.clone_from(REPO_URL, LOCAL_REPO_PATH, branch=BRANCH)
+    return LOCAL_REPO_PATH
 
 @click.command("status")
 @click.argument("service_names", nargs=-1)  # accepts multiple services
@@ -35,8 +43,8 @@ def status(service_names):
         click.echo("❌ Please provide at least one service name.")
         return
 
-    clone_repo()
-    config_folder = LOCAL_REPO_PATH / CONFIG_SUBPATH
+    click.echo(f"🔄 Cloning/pulling repo and switching to branch: {BRANCH}")
+    config_folder = clone_repo() / CONFIG_SUBPATH
 
     for service_name in service_names:
         service_name = service_name.lower()
