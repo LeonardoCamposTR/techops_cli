@@ -127,8 +127,6 @@ def status(services):
         # Determine column width automatically
         svc_width = max([len(svc) for svc in env_services.keys()] + [7])
         url_width = 70
-        print(f"{'SERVICE':<{svc_width}} | {'URL':<{url_width}} | STATUS")
-        print("-" * (svc_width + url_width + 10))
 
         for svc, urls in env_services.items():
             ok_count = 0
@@ -158,10 +156,7 @@ def status(services):
                 except requests.exceptions.RequestException:
                     status = f"❌ CONNECTION ERROR"
                     fail_count += 1
-                print(f"{svc:<{svc_width}} | {url:<{url_width}} | {status}")
-
-            print(f"\nSummary for {svc}: ✅ OK: {ok_count} | ❌ Failed: {fail_count}")
-            print("-" * (svc_width + url_width + 10))
+                print(f"{svc:<{svc_width}} | {status}")
 
     # =========================
     # 📊 SUMMARY BY ENVIRONMENT
@@ -169,9 +164,9 @@ def status(services):
     print("\n============================")
     print("📊 SUMMARY BY ENVIRONMENT")
     print("============================")
-    summary_header = f"{'ENVIRONMENT':<12} | STATUS"
-    print(summary_header)
-    print("-" * (len(summary_header)+5))
+    # summary_header = f"{'ENVIRONMENT':<12} | STATUS"
+    # print(summary_header)
+    # print("-" * (len(summary_header)+5))
 
     for env in ENVIRONMENTS:
         env_services = report.get(env, {})
@@ -192,6 +187,7 @@ def status(services):
                 break
         status_symbol = "✅" if all_ok else "❌"
         print(f"{env.upper():<12} | {status_symbol}")
+
 
     # =========================
     # 🧹 Cleanup
