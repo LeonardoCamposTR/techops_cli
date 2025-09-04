@@ -5,7 +5,7 @@ from cli.utils import run_aws_cli
 
 @click.command("terminate-asg-instances")
 @click.argument("env")
-@click.option("--profile", default="NON-PROD", help="AWS profile")
+@click.option("--profile", default="preprod", help="AWS profile")
 @click.option("--region", default=None, help="AWS region")
 def terminate_asg_instances(env, profile, region):
     """
