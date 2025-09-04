@@ -262,7 +262,6 @@
 
 import click
 from cli.commands.promoting import promoting_qa, promoting_sat
-from cli.commands.asg import terminate_asg_instances
 from cli.commands.status import status
 from cli.commands.tools import aws
 
@@ -274,7 +273,6 @@ def techops():
 # Register subcommands
 techops.add_command(promoting_qa)
 techops.add_command(promoting_sat)
-techops.add_command(terminate_asg_instances)
 techops.add_command(status)
 techops.add_command(aws)
 
