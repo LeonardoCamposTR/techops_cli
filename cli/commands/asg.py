@@ -5,26 +5,39 @@ from cli.utils import run_aws_cli
 
 @click.command("terminate-asg-instances")
 @click.argument("env")
-@click.option("--profile", default="preprod", help="AWS profile")
 @click.option("--region", default=None, help="AWS region")
-def terminate_asg_instances(env, profile, region):
+def terminate_asg_instances(env, region):
     """
     Terminate all EC2 instances in one or more Auto Scaling Groups
     filtered by tags: platform=onviobr + Name=<env>.
     """
 
+    # Map environments to AWS profile
+    env_map = {
+        "lab": "preprod",
+        "qa": "preprod",
+        "sat": "preprod",
+        "prod": "prod",
+    }
+
+    env_lower = env.lower()
+    if env_lower not in env_map:
+        click.echo(f"❌ Unknown environment '{env}'. Valid: lab, qa, sat, prod.")
+        return
+
+    profile = env_map[env_lower]
+
     # Build base AWS CLI args
-    base_args = []
-    if profile:
-        base_args += ["--profile", profile]
+    base_args = ["--profile", profile]
     if region:
         base_args += ["--region", region]
+
+    click.echo(f"⚡ Using profile={profile} for environment {env}")
 
     # Get all ASGs
     asg_data = run_aws_cli(
         ["autoscaling", "describe-auto-scaling-groups"] + base_args
     )
-
     asgs = asg_data.get("AutoScalingGroups", [])
     if not asgs:
         click.echo("❌ No Auto Scaling Groups found.")
@@ -34,7 +47,7 @@ def terminate_asg_instances(env, profile, region):
     matching_asgs = [
         asg for asg in asgs
         if any(t["Key"] == "platform" and t["Value"] == "onviobr" for t in asg.get("Tags", []))
-        and any(t["Key"] == "name" and t["Value"].lower() == env.lower() for t in asg.get("Tags", []))
+        and any(t["Key"] == "name" and t["Value"].lower() == env_lower for t in asg.get("Tags", []))
     ]
 
     if not matching_asgs:
@@ -71,6 +84,7 @@ def terminate_asg_instances(env, profile, region):
             for asg in instances_data.get("AutoScalingGroups", [])
             for inst in asg.get("Instances", [])
         ]
+
         if not instance_ids:
             click.echo(f"ℹ️ No instances found in ASG {asg_name}")
             continue
