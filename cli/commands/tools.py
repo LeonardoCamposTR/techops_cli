@@ -1,9 +1,9 @@
-from cloud-tools
+import subprocess
 
 @tools.command()
 @click.argument("profile", required=False)
 def login(profile):
-    args = ["login"]
+    cmd = ["cloud-tools", "login"]
     if profile:
-        args += ["--profile", profile.upper()]
-    cloud-tools.main(args=args, standalone_mode=False)
+        cmd += ["--profile", profile.upper()]
+    subprocess.run(cmd, check=True)
