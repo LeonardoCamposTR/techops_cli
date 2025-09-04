@@ -41,22 +41,28 @@ def terminate_asg_instances(env, profile, region):
         click.echo(f"❌ No ASGs found with platform=onviobr and Name={env}")
         return
 
-    # Multi-select ASG using checkbox
+    # Build choices for checkbox
     choices = [asg["AutoScalingGroupName"] for asg in matching_asgs]
+
+    # Checkbox prompt with 'q' keybinding to exit immediately
     selected_asgs = inquirer.checkbox(
         message="Select ASG(s) to terminate (press SPACE to select, ENTER to confirm, q to exit):",
         choices=choices,
-        instruction="Use SPACE to select, ENTER to confirm, q to quit"
+        instruction="Use SPACE to select, ENTER to confirm, q to quit",
+        keybindings={
+            "q": lambda prompt: prompt.exit(result=None)  # q exits immediately
+        }
     ).execute()
 
-    # If empty (user pressed q or selected nothing), exit
+    # If user pressed q or nothing selected, exit
     if not selected_asgs:
-        click.echo("❌ No ASGs selected. Exiting.")
+        click.echo("❌ Exiting.")
         return
 
     click.echo(f"⚡ Selected ASGs: {', '.join(selected_asgs)}")
 
     for asg_name in selected_asgs:
+        # Get instances from ASG
         instances_data = run_aws_cli(
             ["autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", asg_name] + base_args
         )
