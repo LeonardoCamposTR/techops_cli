@@ -70,15 +70,20 @@ def connect_instance_ssm(env, service, region):
         click.echo(f"❌ No instances found for env={env} and service={service}")
         return
 
-    # Let user select instance
-    try:
-        selected_instance = inquirer.select(
-            message="Select instance to connect via SSM:",
-            choices=instance_ids
-        ).execute()
-    except KeyboardInterrupt:
-        click.echo("\n❌ Exiting by user interrupt.")
-        return
+    # Auto-select if only one instance
+    if len(instance_ids) == 1:
+        selected_instance = instance_ids[0]
+        click.echo(f"⚡ Only one instance found: {selected_instance}. Connecting automatically...")
+    else:
+        # Let user select instance
+        try:
+            selected_instance = inquirer.select(
+                message="Select instance to connect via SSM:",
+                choices=instance_ids
+            ).execute()
+        except KeyboardInterrupt:
+            click.echo("\n❌ Exiting by user interrupt.")
+            return
 
     click.echo(f"⚡ Connecting to instance {selected_instance} via SSM...")
 
