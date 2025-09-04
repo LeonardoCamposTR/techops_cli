@@ -41,7 +41,7 @@ def git_clone_or_update():
         subprocess.run(["git", "-C", str(LOCAL_REPO_PATH), "pull", "origin", BRANCH], check=True)
     else:
         print(f"📦 Cloning repo {REPO_URL} into {LOCAL_REPO_PATH}...")
-        subprocess.run(["git", "clone", "-b", BRANCH, REPO_URL, str(LOCAL_REPO_PATH)], check=True)
+        subprocess.run(["git", "clone", "-b", BRANCH, REPO_URL, str(LOCAL_REPO_PATH)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,)
 
 def find_error_line(text):
     keywords = ['FAILED', 'ERROR', 'CRITICAL']
