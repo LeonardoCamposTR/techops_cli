@@ -264,6 +264,7 @@ import click
 from cli.commands.promoting import promoting_qa, promoting_sat
 from cli.commands.asg import terminate_asg_instances
 from cli.commands.status import status
+from cli.commands.tools import tools
 
 @click.group()
 def techops():
