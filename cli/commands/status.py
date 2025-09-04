@@ -12,7 +12,7 @@ import click
 # 🔧 Configurations
 # =========================
 REPO_URL = "git@github.com:tr/a202606_mastersafdevops-tools-builder.git"
-BRANCH = "feature/0.13.0-onviobr-ami-baking"
+BRANCH = "feature/0.13.0-onviobr-ami-baking"  # Hardcoded branch
 LOCAL_REPO_PATH = Path("/tmp/techops_status_repo")
 CONFIG_SUBPATH = "onviobr/resources/nginx/etc/nginx/locations"
 
@@ -44,7 +44,6 @@ def git_clone_or_update():
         subprocess.run(["git", "clone", "-b", BRANCH, REPO_URL, str(LOCAL_REPO_PATH)], check=True)
 
 def find_error_line(text):
-    """Search for FAILED/ERROR/CRITICAL in response body"""
     keywords = ['FAILED', 'ERROR', 'CRITICAL']
     pattern = re.compile(r'(' + '|'.join(keywords) + r')', re.IGNORECASE)
     for line in text.splitlines():
@@ -100,11 +99,8 @@ def status(services):
 
             if api_locations:
                 for env in ENVIRONMENTS:
-                    if env not in report:
-                        report[env] = {}
-                    report_env = report[env]
-                    if svc not in report_env:
-                        report_env[svc] = []
+                    if svc not in report[env]:
+                        report[env][svc] = []
                     for base_location in api_locations:
                         for suffix in service_suffix_map[svc]:
                             # Build URL prefix
@@ -113,12 +109,12 @@ def status(services):
                             else:
                                 prefix = f"https://{env}01.onvio.com.br"
                             url = f"{prefix}{base_location}{suffix}"
-                            report_env[svc].append(url)
+                            report[env][svc].append(url)
             else:
                 print(f"⚠️ No /api location found in {filename}")
 
     # =========================
-    # 🌐 Perform HTTP Requests & Print - Cleaned Professional Version
+    # 🌐 Perform HTTP Requests & Print - Professional Table
     # =========================
     for env in ENVIRONMENTS:
         print(f"\n============================")
@@ -130,9 +126,15 @@ def status(services):
             print("⚠️ No services found for this environment")
             continue
 
+        # Calculate dynamic widths
+        max_service_len = max((len(svc) for svc in env_services.keys()), default=7)
+        ok_width = max(len("OK"), 2)
+        fail_width = max(len("FAILED"), 6)
+
         # Table header
-        print(f"{'SERVICE':25} | {'OK':>5} | {'FAILED':>6}")
-        print("-" * 45)
+        header_fmt = f"{{:<{max_service_len}}} | {{:>{ok_width}}} | {{:>{fail_width}}}"
+        print(header_fmt.format("SERVICE", "OK", "FAILED"))
+        print("-" * (max_service_len + ok_width + fail_width + 6))  # 6 for separators
 
         for svc, urls in env_services.items():
             ok_count = 0
@@ -154,9 +156,9 @@ def status(services):
                     failed_urls.append(f"{url} (CONNECTION ERROR)")
 
             # Print service summary
-            print(f"{svc:25} | {ok_count:>5} | {fail_count:>6}")
+            print(header_fmt.format(svc, ok_count, fail_count))
 
-            # Optional: print failed URLs only
+            # Optional: print failed URLs
             for fail_url in failed_urls:
                 print(f"   ❌ {fail_url}")
 
