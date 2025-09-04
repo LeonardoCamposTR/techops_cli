@@ -9,7 +9,15 @@ REPO_URL = "git@github.com:tr/a202606_mastersafdevops-apidata.git"
 REPO_SUBDIR = "onviobr/deployer"
 
 def run_cmd(cmd, cwd=None, check=True, capture_output=False):
-    result = subprocess.run(cmd, cwd=cwd, check=check, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True, capture_output=capture_output)
+    result = subprocess.run(
+        cmd,
+        cwd=cwd,
+        check=check,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        capture_output=capture_output
+    )
     return result.stdout.strip() if capture_output else None
 
 def git_commit_push(repo_path: Path, files: list[str], commit_message: str):
@@ -76,19 +84,19 @@ def promote_services(services, source_file, target_file):
         shutil.rmtree(tmpdir)
         return
 
-    # Save updated target JSON
-    with tgt_file.open("w") as f:
-        json.dump(tgt_data, f, indent=2)
-
+    # Show the updates
     click.echo(f"💾 Target file updated: {tgt_file}")
     for svc, old, new in updates:
         click.echo(f"⚡ {svc}: {old or 'not present'} → {new}")
 
-    # Commit & push
-    commit_message = f"Promote services from {source_file} → {target_file}:\n" + "\n".join(
-        [f"- {svc}: {old or 'none'} → {new}" for svc, old, new in updates]
-    )
-    git_commit_push(repo_path, [str(tgt_file)], commit_message)
+    # Ask for confirmation before commit & push
+    if click.confirm("📝 Do you want to commit and push these changes?", default=True):
+        commit_message = f"Promote services from {source_file} → {target_file}:\n" + "\n".join(
+            [f"- {svc}: {old or 'none'} → {new}" for svc, old, new in updates]
+        )
+        git_commit_push(repo_path, [str(tgt_file)], commit_message)
+    else:
+        click.echo("❌ Changes were not pushed.")
 
     # Cleanup repo
     click.echo("🧹 Cleaning up local clone...")
