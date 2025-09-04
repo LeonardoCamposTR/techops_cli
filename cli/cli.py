@@ -276,6 +276,7 @@ techops.add_command(promoting_qa)
 techops.add_command(promoting_sat)
 techops.add_command(terminate_asg_instances)
 techops.add_command(status)
+techops.add_command(tools)
 
 def main():
     techops()

@@ -8,7 +8,7 @@ setup(
     install_requires=[
         "click",
         "InquirerPy",
-        "cloud-tools",
+        "cloud-tool",
         
     ],
     entry_points={
