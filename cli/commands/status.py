@@ -1,13 +1,13 @@
 # cli/commands/status.py
 import os
 import re
-import requests
+import subprocess
 from pathlib import Path
 import click
-from git import Repo, GitCommandError
+import requests
 
 REPO_URL = "git@github.com:yourorg/yourrepo.git"
-BRANCH = "develop"  # Hardcoded branch to use
+BRANCH = "develop"  # Hardcoded branch
 LOCAL_REPO_PATH = Path("/tmp/techops_status_repo")
 CONFIG_SUBPATH = "resources/nginx/etc/nginx/locations"
 SUFFIXES = [
@@ -20,31 +20,36 @@ TIMEOUT = 5
 
 location_regex = re.compile(r'location\s+([^\s{]+)')
 
-def clone_repo():
-    """Clone the repo if needed, pull changes, and switch to the hardcoded branch."""
+def run_cmd(cmd, cwd=None, check=True, capture_output=False):
+    """Run a shell command."""
+    result = subprocess.run(
+        cmd, cwd=cwd, check=check, text=True,
+        capture_output=capture_output
+    )
+    return result.stdout.strip() if capture_output else None
+
+def clone_or_pull_repo():
+    """Clone repo if not exists, otherwise pull changes and switch to branch."""
     if LOCAL_REPO_PATH.exists():
-        repo = Repo(LOCAL_REPO_PATH)
-        origin = repo.remotes.origin
-        try:
-            repo.git.checkout(BRANCH)
-        except GitCommandError:
-            origin.fetch(BRANCH)
-            repo.git.checkout(BRANCH)
-        origin.pull()
+        click.echo("📂 Repo exists, pulling latest changes...")
+        run_cmd(["git", "fetch"], cwd=LOCAL_REPO_PATH)
+        run_cmd(["git", "checkout", BRANCH], cwd=LOCAL_REPO_PATH)
+        run_cmd(["git", "pull", "origin", BRANCH], cwd=LOCAL_REPO_PATH)
     else:
-        repo = Repo.clone_from(REPO_URL, LOCAL_REPO_PATH, branch=BRANCH)
+        click.echo(f"📥 Cloning repo into {LOCAL_REPO_PATH} ...")
+        run_cmd(["git", "clone", "-b", BRANCH, REPO_URL, str(LOCAL_REPO_PATH)])
     return LOCAL_REPO_PATH
 
 @click.command("status")
-@click.argument("service_names", nargs=-1)  # accepts multiple services
+@click.argument("service_names", nargs=-1)  # multiple services
 def status(service_names):
     """Check status for one or more services across all environments."""
     if not service_names:
         click.echo("❌ Please provide at least one service name.")
         return
 
-    click.echo(f"🔄 Cloning/pulling repo and switching to branch: {BRANCH}")
-    config_folder = clone_repo() / CONFIG_SUBPATH
+    click.echo(f"🔄 Preparing repository on branch: {BRANCH}")
+    config_folder = clone_or_pull_repo() / CONFIG_SUBPATH
 
     for service_name in service_names:
         service_name = service_name.lower()
