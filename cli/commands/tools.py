@@ -20,7 +20,7 @@ def login():
 
 @aws.command("connect-prod")
 @click.argument("service")
-@click.option("--profile", default="preprod", help="AWS profile")
+@click.option("--profile", default="prod", help="AWS profile")
 @click.option("--region", default=None, help="AWS region")
 def connect_asg_instance_ssm(service, profile, region):
     """
