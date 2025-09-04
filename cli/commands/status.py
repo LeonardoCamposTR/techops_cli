@@ -61,11 +61,9 @@ def status(services):
 
     config_folder = LOCAL_REPO_PATH / CONFIG_SUBPATH
 
+    # Data structures per service per environment
     output = {}
-    error_5xx_counts = {}
-    error_404_counts = {}
-    content_error_counts = {}
-    error_details = {}
+    errors = {}  # {service: {env: list_of_url_status}}
     services_with_5xx = set()
     total_services = len(services)
     service_ok_count = 0
@@ -77,12 +75,6 @@ def status(services):
             service_suffix_map[svc] = BREMPL_SUFFIXES
         else:
             service_suffix_map[svc] = DEFAULT_SUFFIXES
-        # Initialize error counters per suffix
-        for suffix in service_suffix_map[svc]:
-            error_5xx_counts[suffix] = 0
-            error_404_counts[suffix] = 0
-            content_error_counts[suffix] = 0
-            error_details[suffix] = []
 
     # Iterate services
     for svc in services:
@@ -92,6 +84,9 @@ def status(services):
         if not matching_files:
             print(f"⚠️ No config file found for service {svc}")
             continue
+
+        output[svc] = {}
+        errors[svc] = {}
 
         for filename in matching_files:
             file_path = config_folder / filename
@@ -111,95 +106,104 @@ def status(services):
             matches = LOCATION_REGEX.findall(content)
             api_locations = [loc.strip() for loc in matches if loc.strip().startswith("/")]
 
-            if api_locations:
-                urls = []
+            if not api_locations:
+                print(f"⚠️ No /api location found in {filename}")
+                continue
+
+            for env in ENVIRONMENTS:
+                env_urls = []
+                env_errors = []
                 for base_location in api_locations:
                     for suffix in service_suffix_map[svc]:
-                        for env in ENVIRONMENTS:
-                            # Build URL prefix
-                            if env == "prod":
-                                prefix = "https://onvio.com.br" if is_external else "https://int.onvio.com.br"
-                            else:
-                                prefix = f"https://{env}01.onvio.com.br"
-                            urls.append(f"{prefix}{base_location}{suffix}")
-                output[svc] = urls
-            else:
-                print(f"⚠️ No /api location found in {filename}")
+                        # Build URL prefix
+                        if env == "prod":
+                            prefix = "https://onvio.com.br" if is_external else "https://int.onvio.com.br"
+                        else:
+                            prefix = f"https://{env}01.onvio.com.br"
+                        url = f"{prefix}{base_location}{suffix}"
+                        env_urls.append(url)
+                output[svc][env] = env_urls
+                errors[svc][env] = []
 
     # =========================
     # 🌐 Perform HTTP Requests
     # =========================
     print("\n🔍 Request Results:\n")
-
-    for svc, urls in output.items():
+    for svc, env_data in output.items():
         service_has_error = False
         print(f"{svc}:")
         suffixes = service_suffix_map[svc]
 
-        for url in urls:
-            matched_suffix = next((s for s in suffixes if url.endswith(s)), None)
-            try:
-                response = requests.get(url, timeout=TIMEOUT)
-                status_code = response.status_code
-                text = response.text.strip()
+        for env, urls in env_data.items():
+            print(f"  [{env.upper()}]:")
+            for url in urls:
+                matched_suffix = next((s for s in suffixes if url.endswith(s)), None)
+                try:
+                    response = requests.get(url, timeout=TIMEOUT)
+                    status_code = response.status_code
+                    text = response.text.strip()
 
-                if status_code == 200:
-                    err_line = find_error_line(text)
-                    if err_line:
-                        print(f"  {url} - ⚠️ FAILED in response")
-                        print(f"    Line: {err_line}")
+                    if status_code == 200:
+                        err_line = find_error_line(text)
+                        if err_line:
+                            print(f"    {url} - ⚠️ FAILED in response")
+                            print(f"      Line: {err_line}")
+                            if matched_suffix:
+                                errors[svc][env].append((url, "FAILED in response", err_line))
+                            service_has_error = True
+                        else:
+                            print(f"    {url} - ✅ OK")
+                    elif status_code == 404:
+                        print(f"    {url} - ❌ HTTP 404 NOT FOUND")
                         if matched_suffix:
-                            content_error_counts[matched_suffix] += 1
-                            error_details[matched_suffix].append((svc, url, "FAILED in response", err_line))
+                            errors[svc][env].append((url, "HTTP 404", None))
                         service_has_error = True
+                    elif 500 <= status_code <= 599:
+                        print(f"    {url} - ❌ HTTP {status_code} (Server Error)")
+                        if matched_suffix:
+                            errors[svc][env].append((url, f"HTTP {status_code}", None))
+                        service_has_error = True
+                        services_with_5xx.add(svc)
                     else:
-                        print(f"  {url} - ✅ OK")
-                elif status_code == 404:
-                    print(f"  {url} - ❌ HTTP 404 NOT FOUND")
-                    if matched_suffix:
-                        error_404_counts[matched_suffix] += 1
-                        error_details[matched_suffix].append((svc, url, "HTTP 404", None))
-                    service_has_error = True
-                elif 500 <= status_code <= 599:
-                    print(f"  {url} - ❌ HTTP {status_code} (Server Error)")
-                    if matched_suffix:
-                        error_5xx_counts[matched_suffix] += 1
-                        error_details[matched_suffix].append((svc, url, f"HTTP {status_code}", None))
-                    service_has_error = True
-                    services_with_5xx.add(svc)
-                else:
-                    print(f"  {url} - ❌ HTTP {status_code}")
-                    if matched_suffix:
-                        error_details[matched_suffix].append((svc, url, f"HTTP {status_code}", None))
-                    service_has_error = True
+                        print(f"    {url} - ❌ HTTP {status_code}")
+                        if matched_suffix:
+                            errors[svc][env].append((url, f"HTTP {status_code}", None))
+                        service_has_error = True
 
-            except requests.exceptions.RequestException as e:
-                print(f"  {url} - ❌ CONNECTION ERROR ({e})")
-                service_has_error = True
-                if matched_suffix:
-                    error_details[matched_suffix].append((svc, url, f"CONNECTION ERROR ({e})", None))
+                except requests.exceptions.RequestException as e:
+                    print(f"    {url} - ❌ CONNECTION ERROR ({e})")
+                    service_has_error = True
+                    if matched_suffix:
+                        errors[svc][env].append((url, f"CONNECTION ERROR ({e})", None))
+            print()
 
-        print()
         if not service_has_error:
             service_ok_count += 1
 
     # =========================
-    # 📝 Pretty Report
+    # 📝 Pretty Report by Environment
     # =========================
     success_percent = (service_ok_count / total_services) * 100 if total_services else 0
 
     print("\n==========================")
-    print(f"📝 PRETTY REPORT")
+    print(f"📝 PRETTY REPORT (BY ENVIRONMENT)")
     print("==========================\n")
     print(f"Total services: {total_services}")
     print(f"Success: {service_ok_count}/{total_services} ({success_percent:.2f}%)")
     print("---------------------------------------------")
 
-    for suffix in set(s for sl in service_suffix_map.values() for s in sl):
-        err_5xx = error_5xx_counts[suffix]
-        err_404 = error_404_counts[suffix]
-        print(f"{suffix} errors (500-599): {err_5xx}/{total_services} | Not Found (404): {err_404}/{total_services}")
-    print("---------------------------------------------")
+    for svc, env_data in errors.items():
+        print(f"{svc}:")
+        for env, env_errors in env_data.items():
+            print(f"  [{env.upper()}]:")
+            if env_errors:
+                for url, err_type, err_line in env_errors:
+                    print(f"    {url} - {err_type}")
+                    if err_line:
+                        print(f"      Detail: {err_line}")
+            else:
+                print("    ✅ All OK")
+        print("---------------------------------------------")
 
     if services_with_5xx:
         print("❌ Services with 500+ errors:")
