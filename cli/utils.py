@@ -84,6 +84,11 @@ def promote_services(services, source_file, target_file):
         shutil.rmtree(tmpdir)
         return
 
+    # Write updated JSON back to target file
+    with tgt_file.open("w") as f:
+        json.dump(tgt_data, f, indent=2)
+        f.write("\n")  # add newline at EOF for nicer git diffs
+
     # Show the updates
     click.echo(f"💾 Target file updated: {tgt_file}")
     for svc, old, new in updates:
