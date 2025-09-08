@@ -208,7 +208,7 @@ def terminate_asg_instances(env, region):
 def show_instances(env, service, region):
     """
     Show EC2 instance information (Service name, AMI name, Launch time)
-    for a given environment and service.
+    for a given environment and service (case-insensitive).
     """
 
     # Map environments to AWS profile
@@ -231,41 +231,54 @@ def show_instances(env, service, region):
 
     click.echo(f"⚡ Using profile={profile} for environment {env}")
 
-    # Get EC2 instances filtered by env + service
+    # Get all instances for this env
     instances_data = run_aws_cli(
         [
             "ec2", "describe-instances",
-            "--filters",
-            f"Name=tag:env,Values={env_lower}",
-            f"Name=tag:service,Values={service}",
+            "--filters", f"Name=tag:env,Values={env_lower}",
         ] + base_args
     )
 
     reservations = instances_data.get("Reservations", [])
     if not reservations:
-        click.echo(f"❌ No instances found for service '{service}' in env '{env}'.")
+        click.echo(f"❌ No instances found for env '{env}'.")
         return
 
+    # Flatten instances
     instances = [
         inst
         for res in reservations
         for inst in res.get("Instances", [])
     ]
 
+    # Filter by service tag (case-insensitive)
+    matching_instances = []
+    for inst in instances:
+        tags = {t["Key"].lower(): t["Value"] for t in inst.get("Tags", [])}
+        if "service" in tags and tags["service"].lower() == service.lower():
+            matching_instances.append(inst)
+
+    if not matching_instances:
+        click.echo(f"❌ No instances found for service '{service}' in env '{env}'.")
+        return
+
     # Collect AMI IDs to resolve into names
-    ami_ids = list({inst["ImageId"] for inst in instances})
+    ami_ids = list({inst["ImageId"] for inst in matching_instances})
     ami_data = run_aws_cli(["ec2", "describe-images", "--image-ids"] + ami_ids + base_args)
     ami_map = {img["ImageId"]: img.get("Name", "N/A") for img in ami_data.get("Images", [])}
 
     # Show results
     click.echo("\n📋 Instance Information:")
-    for inst in instances:
+    for inst in matching_instances:
         ami_id = inst["ImageId"]
         ami_name = ami_map.get(ami_id, "N/A")
         launch_time = inst.get("LaunchTime", "N/A")
+        service_tag = next(
+            (t["Value"] for t in inst.get("Tags", []) if t["Key"].lower() == "service"), "N/A"
+        )
 
         click.echo(f"- InstanceId: {inst['InstanceId']}")
-        click.echo(f"  Service:    {service}")
+        click.echo(f"  Service:    {service_tag}")
         click.echo(f"  AMI:        {ami_name} ({ami_id})")
         click.echo(f"  LaunchTime: {launch_time}")
         click.echo("")
