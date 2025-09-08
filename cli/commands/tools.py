@@ -4,6 +4,9 @@ from cli.utils import run_aws_cli
 import subprocess
 import os
 from datetime import datetime, timezone, timedelta
+import pkg_resources
+import tempfile
+import shutil
 
 @click.group()
 def aws():
@@ -13,13 +16,22 @@ def aws():
 @aws.command("login")
 def login():
     """
-    Login with multilogin suported ( preprod and prod together)
-
+    Login with multilogin supported (preprod and prod together)
+    
     Usage:
         connect {env} {service}
     """
 
-    cmd = ["cloud-tool", "multilogin", "-i", "~/.venv/profiles.csv"]
+    # Get the path of the embedded profiles CSV inside the package
+    profiles_path = pkg_resources.resource_filename("my_cli", "data/aws_profiles.csv")
+
+    # Create a temporary copy because cloud-tool may require a real file path
+    with tempfile.NamedTemporaryFile(mode="w", delete=False) as tmp_file:
+        shutil.copy(profiles_path, tmp_file.name)
+        tmp_file_path = tmp_file.name
+
+    # Run the cloud-tool command using the embedded file
+    cmd = ["cloud-tool", "multilogin", "-i", tmp_file_path]
     subprocess.run(cmd, check=True)
 
 @aws.command("connect")
