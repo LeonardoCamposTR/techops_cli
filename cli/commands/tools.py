@@ -203,11 +203,12 @@ def terminate_asg_instances(env, region):
 
 @aws.command("show-instances")
 @click.argument("env")
+@click.argument("service")
 @click.option("--region", default=None, help="AWS region")
-def show_instances(env, region):
+def show_instances(env, service, region):
     """
-    Show EC2 instance information (Name tag, AMI name, Launch time)
-    for a given environment.
+    Show EC2 instance information (Service name, AMI name, Launch time)
+    for a given environment and service.
     """
 
     # Map environments to AWS profile
@@ -230,18 +231,19 @@ def show_instances(env, region):
 
     click.echo(f"⚡ Using profile={profile} for environment {env}")
 
-    # Get EC2 instances filtered by tag
+    # Get EC2 instances filtered by env + service
     instances_data = run_aws_cli(
         [
             "ec2", "describe-instances",
-            "--filters", f"Name=tag:platform,Values=onviobr",
-                        f"Name=tag:name,Values={env_lower}",
+            "--filters",
+            f"Name=tag:env,Values={env_lower}",
+            f"Name=tag:service,Values={service}",
         ] + base_args
     )
 
     reservations = instances_data.get("Reservations", [])
     if not reservations:
-        click.echo("❌ No instances found.")
+        click.echo(f"❌ No instances found for service '{service}' in env '{env}'.")
         return
 
     instances = [
@@ -258,14 +260,12 @@ def show_instances(env, region):
     # Show results
     click.echo("\n📋 Instance Information:")
     for inst in instances:
-        # Extract Name tag
-        name_tag = next((t["Value"] for t in inst.get("Tags", []) if t["Key"].lower() == "name"), "N/A")
         ami_id = inst["ImageId"]
         ami_name = ami_map.get(ami_id, "N/A")
         launch_time = inst.get("LaunchTime", "N/A")
 
         click.echo(f"- InstanceId: {inst['InstanceId']}")
-        click.echo(f"  Name:       {name_tag}")
+        click.echo(f"  Service:    {service}")
         click.echo(f"  AMI:        {ami_name} ({ami_id})")
         click.echo(f"  LaunchTime: {launch_time}")
         click.echo("")
