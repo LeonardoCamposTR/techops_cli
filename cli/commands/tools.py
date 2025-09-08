@@ -2,6 +2,7 @@ import click
 from InquirerPy import inquirer
 from cli.utils import run_aws_cli
 import subprocess
+import os
 
 @click.group()
 def aws():
@@ -94,14 +95,15 @@ def connect_instance_ssm(env, service, region):
 
     click.echo(f"⚡ Connecting to instance {selected_instance} via SSM...")
 
-    # Start SSM session
-    subprocess.run(
-        ["aws", "ssm", "start-session", "--target", selected_instance] + base_args,
-        check=True,
-        stdin=None,
-        stdout=None,
-        stderr=None
-    )
+    # # Start SSM session
+    # subprocess.run(
+    #     ["aws", "ssm", "start-session", "--target", selected_instance] + base_args,
+    #     check=True,
+    #     stdin=None,
+    #     stdout=None,
+    #     stderr=None
+    # )
+    os.execvp("aws", ["aws", "ssm", "start-session", "--target", selected_instance] + base_args)
 
 
 @aws.command("terminate")
