@@ -275,12 +275,21 @@ def show_instances(env, service, region):
     ami_data = run_aws_cli(["ec2", "describe-images", "--image-ids"] + ami_ids + base_args)
     ami_map = {img["ImageId"]: img.get("Name", "N/A") for img in ami_data.get("Images", [])}
 
-    # Show results
     click.echo("\n📋 Running Instance Information:")
     for inst in matching_instances:
         ami_id = inst["ImageId"]
         ami_name = ami_map.get(ami_id, "N/A")
-        launch_time = inst.get("LaunchTime", "N/A")
+
+        # Parse LaunchTime to datetime and convert to GMT-3
+        launch_time_raw = inst.get("LaunchTime", "N/A")
+        if launch_time_raw != "N/A":
+            launch_dt = datetime.fromisoformat(launch_time_raw.replace("Z", "+00:00"))
+            launch_time = launch_dt.astimezone(
+                timezone(timedelta(hours=-3))
+            ).strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            launch_time = "N/A"
+
         service_tag = next(
             (t["Value"] for t in inst.get("Tags", []) if t["Key"].lower() == "service"), "N/A"
         )
