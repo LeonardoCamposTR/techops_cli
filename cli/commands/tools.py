@@ -209,6 +209,7 @@ def show_instances(env, service, region):
     """
     Show EC2 instance information (Service name, AMI name, Launch time)
     for a given environment and service (case-insensitive).
+    Only running instances are shown.
     """
 
     # Map environments to AWS profile
@@ -231,17 +232,19 @@ def show_instances(env, service, region):
 
     click.echo(f"⚡ Using profile={profile} for environment {env}")
 
-    # Get all instances for this env
+    # Get only running instances for this env
     instances_data = run_aws_cli(
         [
             "ec2", "describe-instances",
-            "--filters", f"Name=tag:env,Values={env_lower}",
+            "--filters",
+            f"Name=tag:env,Values={env_lower}",
+            "Name=instance-state-name,Values=running",
         ] + base_args
     )
 
     reservations = instances_data.get("Reservations", [])
     if not reservations:
-        click.echo(f"❌ No instances found for env '{env}'.")
+        click.echo(f"❌ No running instances found for env '{env}'.")
         return
 
     # Flatten instances
@@ -259,7 +262,7 @@ def show_instances(env, service, region):
             matching_instances.append(inst)
 
     if not matching_instances:
-        click.echo(f"❌ No instances found for service '{service}' in env '{env}'.")
+        click.echo(f"❌ No running instances found for service '{service}' in env '{env}'.")
         return
 
     # Collect AMI IDs to resolve into names
@@ -268,7 +271,7 @@ def show_instances(env, service, region):
     ami_map = {img["ImageId"]: img.get("Name", "N/A") for img in ami_data.get("Images", [])}
 
     # Show results
-    click.echo("\n📋 Instance Information:")
+    click.echo("\n📋 Running Instance Information:")
     for inst in matching_instances:
         ami_id = inst["ImageId"]
         ami_name = ami_map.get(ami_id, "N/A")
