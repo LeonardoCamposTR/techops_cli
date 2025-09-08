@@ -198,3 +198,74 @@ def terminate_asg_instances(env, region):
             click.echo(f"❌ Termination cancelled for ASG {asg_name}.")
 
     click.echo(f"Terminate ASG instances for {env} (profile={profile}, region={region})")
+
+
+
+@aws.command("show-instances")
+@click.argument("env")
+@click.option("--region", default=None, help="AWS region")
+def show_instances(env, region):
+    """
+    Show EC2 instance information (Name tag, AMI name, Launch time)
+    for a given environment.
+    """
+
+    # Map environments to AWS profile
+    env_map = {
+        "lab": "preprod",
+        "qa": "preprod",
+        "sat": "preprod",
+        "prod": "prod",
+    }
+
+    env_lower = env.lower()
+    if env_lower not in env_map:
+        click.echo(f"❌ Unknown environment '{env}'. Valid: lab, qa, sat, prod.")
+        return
+
+    profile = env_map[env_lower]
+    base_args = ["--profile", profile]
+    if region:
+        base_args += ["--region", region]
+
+    click.echo(f"⚡ Using profile={profile} for environment {env}")
+
+    # Get EC2 instances filtered by tag
+    instances_data = run_aws_cli(
+        [
+            "ec2", "describe-instances",
+            "--filters", f"Name=tag:platform,Values=onviobr",
+                        f"Name=tag:name,Values={env_lower}",
+        ] + base_args
+    )
+
+    reservations = instances_data.get("Reservations", [])
+    if not reservations:
+        click.echo("❌ No instances found.")
+        return
+
+    instances = [
+        inst
+        for res in reservations
+        for inst in res.get("Instances", [])
+    ]
+
+    # Collect AMI IDs to resolve into names
+    ami_ids = list({inst["ImageId"] for inst in instances})
+    ami_data = run_aws_cli(["ec2", "describe-images", "--image-ids"] + ami_ids + base_args)
+    ami_map = {img["ImageId"]: img.get("Name", "N/A") for img in ami_data.get("Images", [])}
+
+    # Show results
+    click.echo("\n📋 Instance Information:")
+    for inst in instances:
+        # Extract Name tag
+        name_tag = next((t["Value"] for t in inst.get("Tags", []) if t["Key"].lower() == "name"), "N/A")
+        ami_id = inst["ImageId"]
+        ami_name = ami_map.get(ami_id, "N/A")
+        launch_time = inst.get("LaunchTime", "N/A")
+
+        click.echo(f"- InstanceId: {inst['InstanceId']}")
+        click.echo(f"  Name:       {name_tag}")
+        click.echo(f"  AMI:        {ami_name} ({ami_id})")
+        click.echo(f"  LaunchTime: {launch_time}")
+        click.echo("")
