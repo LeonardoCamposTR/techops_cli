@@ -97,7 +97,10 @@ def connect_instance_ssm(env, service, region):
     # Start SSM session
     subprocess.run(
         ["aws", "ssm", "start-session", "--target", selected_instance] + base_args,
-        check=True
+        check=True,
+        stdin=None,
+        stdout=None,
+        stderr=None
     )
 
 
